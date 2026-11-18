@@ -476,3 +476,14 @@ pi -p --mode json --session-id <uuid>
 - `deploy/pichat.service`：systemd 单元（裸机部署）。
 - `Makefile`：`build`、`test`、`run`、`docker`、`release`（交叉编译 linux/darwin amd64/arm64）。
 - `README.md`：快速开始（docker / 二进制 / tailscale）、接入 agent 步骤。
+
+## 11. 实现与本规格的差异（2026-11-19 实现后同步）
+
+- 停用的 agent 调 API 返回 403 `disabled`（不是 401），listener 退避重试而不退出。
+- `PATCH /me` 改密码必须带 `currentPassword`；改密码后该用户其他会话全部失效。
+- `/run-tokens` 不带 wakeId 时，如果有指挥者 @ 本 agent 的未读消息，也返回 `commander:true`。
+- Claude project 档参数：`--permission-mode acceptEdits --strict-mcp-config --allowedTools "Bash Read Edit Write ..."`（单靠 acceptEdits 在 -p 下会拒绝 Bash）。pi restricted 档额外加 `--no-mcp`。
+- prompt 里的指挥者标记是每次 run 随机生成的 `[指挥者:<nonce>]`，正文中的 nonce 会被删掉，续行缩进防伪造。
+- webhook 默认禁止连接回环、私网、CGNAT（含 tailnet）地址，`PICHAT_WEBHOOK_ALLOW` 放行；`PICHAT_TRUSTED_PROXIES` 指定可信代理。
+- agent 删除后保留为 `deleted_at` 墓碑行，旧消息仍显示作者；`invites.agent_id` 用于 reset-token。
+- project 档"只在项目目录里工作"只是工作目录和 prompt 约束，不是沙箱。

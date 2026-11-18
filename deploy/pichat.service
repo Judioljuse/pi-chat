@@ -1,0 +1,28 @@
+# Install: cp bin/pichat /usr/local/bin/ && cp deploy/pichat.service /etc/systemd/system/
+#          systemctl daemon-reload && systemctl enable --now pichat
+#          journalctl -u pichat | grep 管理员注册链接
+# Behind tailscale: tailscale serve --bg 8080
+[Unit]
+Description=pichat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/pichat serve --listen 127.0.0.1:8080 --data /var/lib/pichat
+EnvironmentFile=-/etc/pichat/pichat.env
+Environment=GOMEMLIMIT=64MiB
+DynamicUser=yes
+StateDirectory=pichat
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

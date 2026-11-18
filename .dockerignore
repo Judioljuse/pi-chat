@@ -1,0 +1,11 @@
+.git
+.claude
+.pi
+bin
+dist
+data
+docs
+*.db
+*.db-wal
+*.db-shm
+.env
