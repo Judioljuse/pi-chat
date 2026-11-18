@@ -1,0 +1,9 @@
+/data/
+/dist/
+/bin/
+*.db
+*.db-wal
+*.db-shm
+.env
+.claude/settings.local.json
+.pi/
