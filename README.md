@@ -144,7 +144,7 @@ prompt 里指挥者的消息带一个每次 run 随机生成的暗号标记，�
 |-|-|-|
 | `PICHAT_UPDATE` | `on` | `off` 关闭在线更新（管理页只显示版本） |
 | `PICHAT_UPDATE_REPO` | `Judioljuse/pi-chat` | 从哪个仓库的发布更新 |
-| `PICHAT_UPDATE_MIRROR` | 空 | 下载地址前缀，github.com 下载慢时用，例如 `https://ghproxy.example.com/`（会拼成 `<前缀><原下载地址>`） |
+| `PICHAT_UPDATE_MIRROR` | 空 | 下载地址前缀，github.com 下载慢时用（国内实测 `https://ghfast.top/` 可用），会拼成 `<前缀><原下载地址>`。校验用的 sha256 仍从 GitHub API 取，镜像改不了内容。Docker：在 `.env` 或命令前设置这个变量 |
 | `PICHAT_UPDATE_API` | `https://api.github.com` | GitHub API 地址（测试用） |
 
 Docker：新程序放在数据卷 `/data/bin/` 里，容器重建后仍然有效（启动时会切过去）。数据卷挂载成 `noexec` 时在线更新会失败，提示「数据目录不允许执行程序」，这时用下面的手动方式更新。

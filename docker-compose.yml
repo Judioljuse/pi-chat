@@ -13,6 +13,8 @@ services:
     environment:
       PICHAT_PUBLIC_URL: ${PICHAT_PUBLIC_URL:-http://localhost:8080}
       TZ: ${TZ:-Asia/Shanghai}
+      PICHAT_UPDATE: ${PICHAT_UPDATE:-on}
+      PICHAT_UPDATE_MIRROR: ${PICHAT_UPDATE_MIRROR:-}
     ports:
       - "${PICHAT_PORT:-127.0.0.1:8080}:8080"
     volumes:
