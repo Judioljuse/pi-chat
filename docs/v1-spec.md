@@ -211,6 +211,7 @@ CREATE TABLE runs (              -- listener 上报
 - **成员**：只有群成员能读写该群。
 - **群角色**：owner（建群的人类）、admin（人类）、member。owner/admin 能改群名/topic、生成邀请链接、踢人、任免 admin（仅 owner）。踢掉人类时，他名下在该群的 agent 一起移出。
 - **agent 建群**：群 owner 记为该 agent 的 owner，agent 和它的 owner 都自动入群。
+- **把已有用户拉进群**：群 owner/admin 可以直接把实例里的其他人类拉进群（`POST /groups/{id}/members {userId}`），不需要邀请链接。agent token 不能拉人。
 - **把 agent 拉进群**：只有 agent 的 owner 能做（网页上 `POST /groups/{id}/members {agentId}`），owner 自己必须是群成员。agent 不能拉别人。
 - **canCommand(author, agent, group)**：author 是人类，且（author 是 agent 的 owner，或 grants 里有 `(agent, author|'*', group|'*')`，`'*','*'` 不允许）。agent 写的消息永远不能指挥任何 agent。
 - **@all agents**：只有群 owner/admin 能发（正文含 `@all` 或请求里 `mentionAll:true`），唤醒群里所有 agent。agent 发的 `@all` 无效（不报错，只是不唤醒）。
@@ -267,7 +268,8 @@ CREATE TABLE runs (              -- listener 上报
 | `PATCH /groups/{id}` | `{name?,topic?}` | `{group}` |
 | `DELETE /groups/{id}` | owner | `{}` 解散（删除群和消息） |
 | `POST /groups/{id}/invite` | owner/admin `{}` | `{code,url}`，7 天、20 次，生成新的同时作废该群旧链接 |
-| `POST /groups/{id}/members` | `{agentId}` 拉自己的 agent | `{member}` |
+| `GET /users` | 人类 `?groupId=` 可选 | `{users:[{id,name,displayName,inGroup?}]}` 实例里的人类用户目录（不含 agent、已删除和停用的），按 displayName 排序。带 `groupId` 时调用方必须是该群成员，每项多一个 `inGroup` |
+| `POST /groups/{id}/members` | `{agentId}` 拉自己的 agent（任何群成员）；或 `{userId}` 拉已有用户（owner/admin），二选一 | `{member}`。拉人：目标必须是未停用的人类，私聊 400，已在群里 409 `已经在群里`，受群人数上限限制；以 member 身份入群，插系统消息「<我的群昵称> 把 <对方群昵称> 拉进了群」，推 `group` 给群成员、`groups` 给被拉的人 |
 | `PATCH /groups/{id}/members/{pid}` | owner `{role:'admin'|'member'}` | `{member}` |
 | `DELETE /groups/{id}/members/{pid}` | owner/admin 踢人；本人=退出 | `{}`；owner 退出时群里有其他人类就转给最早加入的人类，否则解散 |
 | `POST /chats` | `{with: principalId}` | `{group}`（dm，同一对幂等）。允许：双方有共同群，或同一 owner 的人类和 agent，或同一 owner 的两个 agent |
@@ -554,3 +556,4 @@ pi -p --mode json --session-id <uuid>
 - runtime notice（listener 报告主会话被终端进程占用、会话分叉等）：迁移 3 给 principals 加 `runtime_notice/runtime_notice_at`（已有数据不变）。notice 一直保留，直到 listener 换一条或 owner 在「我的 agent」里点掉（`POST /agents/{id}/dismiss-notice`）；网页运行状态卡显示琥珀色提示，成员面板 agent 行显示琥珀色小圆点（悬停看全文）。
 - listener 主会话的外部使用检测和分叉安全的 resume（8.8）；runtime notice 和 dismiss-notice（6.x、数据库迁移 3）。
 - listener 默认改为每个 agent 一个主会话（sessionScope=agent，8.2 第 5 条），工作目录固定，群绑定改为 `--add-dir`，所有 run 串行，新增 attach/read/inbox 命令和 @ 整理（8.6、8.7）。注意 restricted 档也续用主会话，模型能看到之前指挥者 run 的上下文（仍然没有工具）；需要隔离时用 `--session-scope group`。
+- 新增 `GET /users`（人类用户目录，`?groupId=` 带 `inGroup`）；`POST /groups/{id}/members` 除 `{agentId}` 外接受 `{userId}`，群 owner/admin 直接把已有用户拉进群（见 5、6.4）。网页群设置的「邀请成员」区和聊天顶栏的「邀请」按钮用同一组标签页：已有用户 / 我的 agent / 邀请链接。

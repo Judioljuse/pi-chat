@@ -118,6 +118,12 @@ func (s *Server) groupJSON(q querier, a *actor, gid string) (obj, error) {
 
 // addMember inserts pid into gid with a unique nick; existing members are returned unchanged.
 func (s *Server) addMember(tx *sql.Tx, after *[]func(), gid, pid, role string) (*memberJSON, error) {
+	return s.addMemberBy(tx, after, gid, pid, role, "")
+}
+
+// addMemberBy is addMember with the inviter's nick for the join system message
+// ("<by> 把 <nick> 拉进了群"); an empty by gives "<nick> 加入了群".
+func (s *Server) addMemberBy(tx *sql.Tx, after *[]func(), gid, pid, role, by string) (*memberJSON, error) {
 	var exists int
 	tx.QueryRow(`SELECT 1 FROM members WHERE group_id=? AND principal_id=?`, gid, pid).Scan(&exists)
 	if exists == 0 {
@@ -146,7 +152,11 @@ func (s *Server) addMember(tx *sql.Tx, after *[]func(), gid, pid, role string) (
 		var kind string
 		tx.QueryRow(`SELECT kind FROM groups WHERE id=?`, gid).Scan(&kind)
 		if kind == "group" {
-			if err := s.systemMessage(tx, after, gid, nick+" 加入了群"); err != nil {
+			text := nick + " 加入了群"
+			if by != "" {
+				text = by + " 把 " + nick + " 拉进了群"
+			}
+			if err := s.systemMessage(tx, after, gid, text); err != nil {
 				return nil, err
 			}
 			if _, err := tx.Exec(`UPDATE members SET last_read_seq=(SELECT last_seq FROM groups WHERE id=?1) WHERE group_id=?1 AND principal_id=?2`, gid, pid); err != nil {
@@ -484,34 +494,92 @@ func (s *Server) groupInvite(c *ctx) (any, error) {
 	return obj{"code": code, "url": s.cfg.PublicURL + "/#/redeem/" + code}, nil
 }
 
-func (s *Server) addAgentMember(c *ctx) (any, error) {
+// addGroupMember handles POST /groups/{id}/members: {agentId} pulls in one of
+// the caller's own agents; {userId} lets an owner/admin add an existing human.
+func (s *Server) addGroupMember(c *ctx) (any, error) {
 	gid := c.r.PathValue("id")
-	var req struct{ AgentID string }
+	var req struct{ AgentID, UserID string }
 	if err := c.decode(&req); err != nil {
 		return nil, err
 	}
+	if (req.AgentID == "") == (req.UserID == "") {
+		return nil, badRequest("agentId 和 userId 必须二选一")
+	}
 	var m *memberJSON
 	err := s.tx(func(tx *sql.Tx, after *[]func()) error {
-		if _, err := s.role(tx, c.a, gid); err != nil {
+		role, err := s.role(tx, c.a, gid)
+		if err != nil {
 			return err
 		}
 		g, err := s.loadGroup(tx, gid)
 		if err != nil {
 			return err
 		}
-		if g.Kind == "dm" {
-			return badRequest("不能把 agent 拉进私聊")
-		}
-		if err := s.ownAgent(tx, c.a, req.AgentID); err != nil {
+		if req.AgentID != "" {
+			if g.Kind == "dm" {
+				return badRequest("不能把 agent 拉进私聊")
+			}
+			if err := s.ownAgent(tx, c.a, req.AgentID); err != nil {
+				return err
+			}
+			m, err = s.addMember(tx, after, gid, req.AgentID, "member")
 			return err
 		}
-		m, err = s.addMember(tx, after, gid, req.AgentID, "member")
+		if g.Kind == "dm" {
+			return badRequest("不能把人拉进私聊")
+		}
+		if !isManager(role) {
+			return errf(403, "forbidden", "只有群主和管理员能拉人进群")
+		}
+		var disabled int
+		if err := tx.QueryRow(`SELECT disabled FROM principals WHERE id=? AND kind='human' AND deleted_at IS NULL`, req.UserID).Scan(&disabled); err != nil || disabled != 0 {
+			return errf(404, "not_found", "没有这个用户")
+		}
+		var exists int
+		tx.QueryRow(`SELECT 1 FROM members WHERE group_id=? AND principal_id=?`, gid, req.UserID).Scan(&exists)
+		if exists != 0 {
+			return errf(409, "conflict", "已经在群里")
+		}
+		m, err = s.addMemberBy(tx, after, gid, req.UserID, "member", s.principalName(tx, gid, c.a.ID))
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return obj{"member": m}, nil
+}
+
+// listUsers is the directory of active humans; with ?groupId= (caller must be
+// a member) each entry also says whether that user is in the group.
+func (s *Server) listUsers(c *ctx) (any, error) {
+	gid := c.r.URL.Query().Get("groupId")
+	if gid != "" {
+		if _, err := s.role(s.db.R, c.a, gid); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := s.db.R.Query(`SELECT p.id,p.name,p.display_name,
+		EXISTS(SELECT 1 FROM members m WHERE m.group_id=? AND m.principal_id=p.id)
+		FROM principals p WHERE p.kind='human' AND p.deleted_at IS NULL AND p.disabled=0
+		ORDER BY lower(p.display_name), p.name`, gid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := []obj{}
+	for rows.Next() {
+		var id, name, dn string
+		var in int
+		if err := rows.Scan(&id, &name, &dn, &in); err != nil {
+			return nil, err
+		}
+		u := obj{"id": id, "name": name, "displayName": dn}
+		if gid != "" {
+			u["inGroup"] = in != 0
+		}
+		users = append(users, u)
+	}
+	return obj{"users": users}, rows.Err()
 }
 
 func (s *Server) ownAgent(q querier, a *actor, agentID string) error {

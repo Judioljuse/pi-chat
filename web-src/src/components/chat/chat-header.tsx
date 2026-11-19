@@ -1,8 +1,11 @@
-import { ChevronLeft, Settings, Users } from 'lucide-react'
+import { useState } from 'react'
+import { ChevronLeft, Settings, UserPlus, Users } from 'lucide-react'
 import { AvatarGroup } from '@/components/motion/avatar-group'
 import { PrincipalAvatar } from '@/components/pichat/avatar'
 import { AGENT_STATE } from '@/components/pichat/agent-state'
+import { InviteMembers } from '@/components/pichat/invite-members'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { agentStateOf } from '@/lib/store'
 import type { Group, GroupSummary } from '@/lib/types'
 import { memberName } from './util'
@@ -20,6 +23,7 @@ export function ChatHeader({
   onMembers: () => void
   workingIds?: Set<string>
 }) {
+  const [inviteOpen, setInviteOpen] = useState(false)
   const isDm = (info?.kind ?? summary?.kind) === 'dm'
   const name = summary?.name || info?.name || (isDm ? '私聊' : '')
   const sub = isDm ? (summary?.peer?.kind === 'agent' ? 'agent 私聊' : '私聊') : info?.topic
@@ -75,11 +79,31 @@ export function ChatHeader({
             <Users />
           </Button>
           {info.kind !== 'dm' && (
+            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="邀请成员" title="邀请成员" onClick={() => setInviteOpen(true)}>
+              <UserPlus />
+            </Button>
+          )}
+          {info.kind !== 'dm' && (
             <Button asChild variant="ghost" size="icon-sm" className="text-muted-foreground">
               <a href={`#/g/${gid}/settings`} aria-label="群设置" title="群设置">
                 <Settings />
               </a>
             </Button>
+          )}
+          {info.kind !== 'dm' && (
+            <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+              <DialogContent className="gap-0 p-0 sm:max-w-md">
+                <DialogHeader className="gap-1 px-5 pt-5">
+                  <DialogTitle className="font-serif text-[20px] font-normal text-foreground">邀请成员</DialogTitle>
+                  <DialogDescription className="text-[13px]">
+                    {info.myRole === 'owner' || info.myRole === 'admin' ? '拉已有用户、你的 agent 进群，或者生成邀请链接。' : '把你的 agent 拉进群。邀请其他人请找群主或管理员。'}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="px-5 pt-4 pb-5">
+                  <InviteMembers info={info} />
+                </div>
+              </DialogContent>
+            </Dialog>
           )}
         </>
       )}

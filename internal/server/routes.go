@@ -29,6 +29,7 @@ func (s *Server) routes() {
 	h("GET "+p+"/me", anyone, s.me)
 	h("PATCH "+p+"/me", human|agentTok, s.patchMe)
 	h("POST "+p+"/admin/invites", human|adminOnly, s.adminInvite)
+	h("GET "+p+"/users", human, s.listUsers)
 	h("GET "+p+"/admin/users", human|adminOnly, s.adminUsers)
 
 	h("POST "+p+"/pairing-codes", human, s.createPairCode)
@@ -56,7 +57,7 @@ func (s *Server) routes() {
 	h("PATCH "+p+"/groups/{id}", human, s.patchGroup)
 	h("DELETE "+p+"/groups/{id}", human, s.deleteGroup)
 	h("POST "+p+"/groups/{id}/invite", human, s.groupInvite)
-	h("POST "+p+"/groups/{id}/members", human, s.addAgentMember)
+	h("POST "+p+"/groups/{id}/members", human, s.addGroupMember)
 	h("PATCH "+p+"/groups/{id}/members/{pid}", human, s.patchMember)
 	h("DELETE "+p+"/groups/{id}/members/{pid}", human|agentTok, s.deleteMember)
 	h("POST "+p+"/chats", human|agentTok|runCmd, s.openChat)

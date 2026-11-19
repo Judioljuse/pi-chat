@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Ellipsis, Link, LogOut, MessageCircle, Plus, ShieldCheck, ShieldOff, Trash2, UserMinus } from 'lucide-react'
+import { Ellipsis, LogOut, MessageCircle, ShieldCheck, ShieldOff, Trash2, UserMinus } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +10,7 @@ import {
 import { AgentTag, PrincipalAvatar } from '@/components/pichat/avatar'
 import { RoleBadge } from '@/components/pichat/role-badge'
 import { useConfirm } from '@/components/pichat/confirm'
-import { CopyField } from '@/components/pichat/copy-field'
+import { InviteMembers } from '@/components/pichat/invite-members'
 import { Field, Page, Section } from '@/components/pichat/page'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,21 +18,18 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
-import { PLATFORM } from '@/lib/format'
 import { navigate } from '@/lib/router'
-import { fail, loadAgents, loadGroups, loadInfo, notify, useStore } from '@/lib/store'
+import { fail, loadGroups, loadInfo, notify, useStore } from '@/lib/store'
 import type { Group, Member } from '@/lib/types'
 
 export function GroupSettings({ gid }: { gid: string }) {
   const info = useStore((s) => s.info[gid])
-  const agents = useStore((s) => s.agents)
   const meId = useStore((s) => s.me?.id ?? '')
   const working = useStore((s) => s.working[gid])
   const { ask, dialog } = useConfirm()
 
   useEffect(() => {
     loadInfo(gid).catch(() => {})
-    loadAgents().catch(() => {})
   }, [gid])
 
   if (!info)
@@ -48,8 +45,6 @@ export function GroupSettings({ gid }: { gid: string }) {
   const isOwner = info.myRole === 'owner'
   const manage = isOwner || info.myRole === 'admin'
   const isDm = info.kind === 'dm'
-  const memberIds = new Set(info.members.map((m) => m.id))
-  const addable = (agents ?? []).filter((a) => !memberIds.has(a.id))
 
   const act = async (fn: () => Promise<unknown>, ok?: string) => {
     try {
@@ -118,7 +113,11 @@ export function GroupSettings({ gid }: { gid: string }) {
     <Page title={isDm ? '私聊信息' : '群设置'} back={`#/g/${gid}`}>
       {!isDm && <InfoForm key={info.name + '\n' + info.topic} info={info} manage={manage} />}
 
-      {manage && !isDm && <InviteSection gid={gid} />}
+      {!isDm && (
+        <Section title="邀请成员">
+          <InviteMembers info={info} />
+        </Section>
+      )}
 
       <Section className="p-0">
         <h2 className="px-4 pt-4 text-[14px] font-medium text-foreground">
@@ -198,43 +197,6 @@ export function GroupSettings({ gid }: { gid: string }) {
       </Section>
 
       {!isDm && (
-        <Section title="拉我的 agent 进群">
-          {agents == null ? (
-            <Skeleton className="h-9 w-full" />
-          ) : addable.length === 0 ? (
-            <p className="text-[13px] text-muted-foreground">
-              没有可以拉进来的 agent。
-              <a href="#/agents" className="text-brand hover:underline">
-                去添加
-              </a>
-            </p>
-          ) : (
-            <div className="-mx-2 flex flex-col">
-              {addable.map((a) => (
-                <div key={a.id} className="flex items-center gap-2.5 rounded-control px-2 py-1.5 hover:bg-accent">
-                  <PrincipalAvatar id={a.id} name={a.displayName} kind="agent" platform={a.platform} online={a.online} />
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate text-[13.5px] font-medium text-foreground">{a.displayName}</span>
-                    <span className="text-[12px] text-muted-foreground">
-                      {PLATFORM[a.platform ?? ''] || a.platform || '未知平台'} · {a.online ? '在线' : '离线'}
-                    </span>
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => act(() => api('POST', `/groups/${gid}/members`, { agentId: a.id }), `已把 ${a.displayName} 拉进群`)}
-                  >
-                    <Plus />
-                    拉进群
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Section>
-      )}
-
-      {!isDm && (
         <Section title="危险操作">
           <div className="flex flex-wrap gap-2">
             <Button variant="destructive" onClick={leave}>
@@ -291,33 +253,6 @@ function InfoForm({ info, manage }: { info: Group; manage: boolean }) {
           </div>
         )}
       </form>
-    </Section>
-  )
-}
-
-function InviteSection({ gid }: { gid: string }) {
-  const [url, setUrl] = useState('')
-  const [busy, setBusy] = useState(false)
-  const gen = async () => {
-    setBusy(true)
-    try {
-      const r = await api<{ url: string }>('POST', `/groups/${gid}/invite`, {})
-      setUrl(r.url)
-    } catch (e) {
-      fail(e)
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <Section title="邀请链接" description="7 天有效，最多 20 次。生成新链接会作废旧链接。没有账号的人可以用它注册并入群。">
-      {url && <CopyField value={url} />}
-      <div>
-        <Button variant={url ? 'outline' : 'default'} onClick={gen} disabled={busy}>
-          <Link />
-          {url ? '重新生成' : '生成邀请链接'}
-        </Button>
-      </div>
     </Section>
   )
 }
