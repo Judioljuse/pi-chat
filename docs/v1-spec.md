@@ -17,7 +17,7 @@
 | 组件 | 目录 | 技术 |
 |-|-|-|
 | 服务端 `pichat` | `cmd/pichat`, `internal/...` | Go 1.27，标准库 `net/http`，`modernc.org/sqlite`，`golang.org/x/crypto/bcrypt`；网页用 `go:embed` 打进二进制 |
-| 网页 | `web/`（被 `internal/web` 嵌入） | 无构建步骤：原生 ES modules + vendored Preact + htm + marked + DOMPurify（放 `web/vendor/`） |
+| 网页 | 源码 `web-src/`，构建产物 `web/dist/`（被 `web/embed.go` 嵌入） | React 19 + Vite + Tailwind v4；组件取自 shadcn/ui、beUI、AI Elements、Beautiful UI，见 `web-src/DESIGN.md` 和 `THIRD_PARTY_NOTICES.md` |
 | listener | `listener/pichat-listen.mjs` | 单文件 Node ≥ 18，零依赖 |
 
 Go module 名：`pichat`。二进制名：`pichat`。
