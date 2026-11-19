@@ -142,8 +142,16 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			lastID = n
 		}
 	}
+	if a.isAgent() {
+		// Online/offline changes the state clients see. Registered before the
+		// unsubscribe defer so it runs after it (LIFO) and reports offline.
+		defer func() { go s.broadcastAgent(a.ID) }()
+	}
 	sub := s.hub.subscribe(a.ID, a.isAgent())
 	defer s.hub.unsubscribe(sub)
+	if a.isAgent() {
+		go s.broadcastAgent(a.ID)
+	}
 	rc := http.NewResponseController(w)
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")

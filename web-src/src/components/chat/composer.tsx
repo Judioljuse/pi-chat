@@ -11,13 +11,14 @@ import {
 } from '@/components/motion/dropdown-menu'
 import { AttachmentUpload, type AttachmentUploadItem } from '@/components/motion/attachment-upload'
 import { AgentTag, PrincipalAvatar } from '@/components/pichat/avatar'
+import { AgentStateChip } from '@/components/pichat/agent-state'
 import { RoleBadge } from '@/components/pichat/role-badge'
 import { Button } from '@/components/ui/button'
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { api, errorText } from '@/lib/api'
 import { randId } from '@/lib/format'
-import { notify } from '@/lib/store'
+import { agentStateOf, notify } from '@/lib/store'
 import type { FileRef, Group, Member, Message } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { isCoarse, MAX_FILE_SIZE, MAX_FILES, memberName, snippet } from './util'
@@ -370,13 +371,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                                 kind="agent"
                                 platform={m.platform}
                                 size="xs"
-                                online={m.online}
+                                online={m.online && !workingIds.has(m.id)}
                                 working={workingIds.has(m.id)}
                               />
                               <span className="min-w-0 truncate">{memberName(m)}</span>
-                              <span className="ml-auto shrink-0 text-[11.5px] text-muted-foreground">
-                                {workingIds.has(m.id) ? '正在处理' : m.online ? '在线' : '离线'}
-                              </span>
+                              <AgentStateChip state={agentStateOf(m, workingIds.has(m.id))} className="ml-auto text-[11.5px]" />
                             </span>
                           </DropdownMenuItem>
                         ))}
@@ -449,6 +448,7 @@ function Kbd({ children }: { children: string }) {
 
 export function MemberLine({ m, working, stacked }: { m: Member; working?: boolean; stacked?: boolean }) {
   const name = memberName(m)
+  const state = m.kind === 'agent' ? agentStateOf(m, working) : null
   const avatar = (
     <PrincipalAvatar
       id={m.id}
@@ -456,14 +456,11 @@ export function MemberLine({ m, working, stacked }: { m: Member; working?: boole
       kind={m.kind}
       platform={m.platform}
       size={stacked ? 'md' : 'sm'}
-      online={m.kind === 'agent' && m.online && !working}
-      working={working}
+      online={state === 'idle' || state === 'attached'}
+      working={state === 'running'}
     />
   )
   if (stacked) {
-    const sub = [m.kind === 'agent' && m.ownerName && `owner：${m.ownerName}`, working ? '正在处理' : m.kind === 'agent' && !m.online && '离线']
-      .filter(Boolean)
-      .join(' · ')
     return (
       <>
         {avatar}
@@ -473,7 +470,12 @@ export function MemberLine({ m, working, stacked }: { m: Member; working?: boole
             {m.kind === 'agent' && <AgentTag className="shrink-0" />}
             {m.role !== 'member' && <RoleBadge role={m.role} className="shrink-0" />}
           </span>
-          {sub && <span className={cn('truncate text-[12px]', working ? 'text-brand' : 'text-muted-foreground')}>{sub}</span>}
+          {m.kind === 'agent' && (
+            <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground">
+              {state && <AgentStateChip state={state} />}
+              {m.ownerName && <span className="min-w-0 truncate">· owner：{m.ownerName}</span>}
+            </span>
+          )}
         </span>
       </>
     )
@@ -484,7 +486,7 @@ export function MemberLine({ m, working, stacked }: { m: Member; working?: boole
       <span className="max-w-[60%] shrink-0 truncate text-[13.5px] font-medium text-foreground">{name}</span>
       {m.kind === 'agent' && <AgentTag className="shrink-0" />}
       {m.kind === 'agent' && m.ownerName && <span className="min-w-0 truncate text-[12px] text-muted-foreground">owner：{m.ownerName}</span>}
-      {working && <span className="shrink-0 text-[12px] text-brand">· 正在处理</span>}
+      {state && state !== 'idle' && <AgentStateChip state={state} className="shrink-0" />}
       {m.role !== 'member' && <RoleBadge role={m.role} className="ml-auto" />}
     </>
   )

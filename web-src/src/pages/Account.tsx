@@ -6,6 +6,8 @@ import { RoleBadge } from '@/components/pichat/role-badge'
 import { logout } from '@/components/pichat/sidebar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import { disableDesktopNotify, enableDesktopNotify, useNotifyStatus } from '@/lib/desktop-notify'
 import { api } from '@/lib/api'
 import { fail, notify, setState, useStore } from '@/lib/store'
 import type { Me } from '@/lib/types'
@@ -69,6 +71,8 @@ export function Account() {
         </form>
       </Section>
 
+      <NotifySection />
+
       <Section title="修改密码" description="修改后，你在其他设备上的登录会全部失效。">
         <form onSubmit={savePassword} className="flex flex-col gap-3">
           <Field label="当前密码" htmlFor="pw-cur">
@@ -101,5 +105,29 @@ export function Account() {
         </Button>
       </div>
     </Page>
+  )
+}
+
+function NotifySection() {
+  const st = useNotifyStatus()
+  const hint = !st.supported
+    ? '这个浏览器不支持桌面通知。'
+    : !st.secure
+      ? '桌面通知需要 HTTPS 或 localhost 访问（例如 tailscale serve 或 ssh -L）'
+      : st.permission === 'denied'
+        ? '浏览器已拒绝通知。请在地址栏左侧的网站设置里允许通知，再回来打开。'
+        : '有人 @ 你、回复你或私聊你，而你没在看那个群时，弹出桌面通知。点通知会跳到那条消息。'
+  return (
+    <Section title="桌面通知" description={hint}>
+      <label className="flex items-center justify-between gap-3 text-[13px] text-body">
+        开启桌面通知
+        <Switch
+          checked={st.enabled}
+          disabled={!st.supported || !st.secure || st.permission === 'denied'}
+          onCheckedChange={(on) => (on ? enableDesktopNotify() : disableDesktopNotify())}
+          aria-label="开启桌面通知"
+        />
+      </label>
+    </Section>
   )
 }

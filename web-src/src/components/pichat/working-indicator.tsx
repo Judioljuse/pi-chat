@@ -1,3 +1,4 @@
+import { SquareTerminal } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import LoadingState from '@/components/beautiful/loading-state'
 import { EASE_OUT } from '@/lib/ease'
@@ -8,6 +9,8 @@ export interface WorkingAgent {
   name: string
   platform?: string | null
   startedAt: number
+  /** Owner is using the agent's main session in a terminal; wakes wait until it detaches. */
+  attached?: boolean
 }
 
 /** Bottom-of-conversation row: avatar, pixel grid, "CC 正在处理…" and a live timer per running agent. */
@@ -27,7 +30,14 @@ export function WorkingIndicator({ agents, layoutKey }: { agents: WorkingAgent[]
           className="flex items-center gap-3"
         >
           <PrincipalAvatar id={a.id} name={a.name} kind="agent" platform={a.platform} size="md" />
-          <LoadingState label={`${a.name} 正在处理…`} startedAt={a.startedAt} />
+          {a.attached ? (
+            <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+              <SquareTerminal className="size-3.5 text-warning" />
+              {a.name} 正在终端中，消息已排队
+            </span>
+          ) : (
+            <LoadingState label={`${a.name} 正在处理…`} startedAt={a.startedAt} />
+          )}
         </motion.div>
       ))}
     </div>

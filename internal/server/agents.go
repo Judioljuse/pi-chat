@@ -179,8 +179,13 @@ func (s *Server) agentJSON(id string) (obj, error) {
 	if lastSeen.Valid {
 		ls = lastSeen.Int64
 	}
+	sessions, err := s.agentSessions(id)
+	if err != nil {
+		return nil, err
+	}
 	return obj{"id": id, "displayName": dn, "platform": platform, "intro": intro, "commanderTier": tier, "ownerNotes": notes,
-		"disabled": disabled != 0, "online": s.hub.online(id), "lastSeenAt": ls, "wake": wake, "grants": grants, "recentRuns": runs}, nil
+		"disabled": disabled != 0, "online": s.hub.online(id), "lastSeenAt": ls, "wake": wake, "grants": grants, "recentRuns": runs,
+		"runtime": s.loadRuntime(id).json(), "sessions": sessions}, nil
 }
 
 func (s *Server) grants(agentID string) ([]obj, error) {
@@ -392,9 +397,12 @@ func (s *Server) setWake(c *ctx) (any, error) {
 // ---- agent self ----
 
 func (s *Server) createRunToken(c *ctx) (any, error) {
-	var req struct{ GroupID, WakeID string }
+	var req struct{ GroupID, WakeID, Session, Host, MaxTier string }
 	if err := c.decode(&req); err != nil {
 		return nil, err
+	}
+	if req.MaxTier != "" && tierRank(req.MaxTier) < 0 {
+		return nil, badRequest("maxTier 只能是 restricted、project 或 full")
 	}
 	if _, err := s.role(s.db.R, c.a, req.GroupID); err != nil {
 		return nil, err
@@ -419,13 +427,36 @@ func (s *Server) createRunToken(c *ctx) (any, error) {
 	scope := req.GroupID
 	if commander {
 		s.db.R.QueryRow(`SELECT commander_tier FROM principals WHERE id=?`, c.a.ID).Scan(&tier)
+	}
+	// The listener may run the job at a lower tier (local maxTier, root, no commander trigger):
+	// the token and its provenance then carry that tier, never a higher one.
+	if req.MaxTier != "" && tierRank(req.MaxTier) < tierRank(tier) {
+		tier = req.MaxTier
+	}
+	if tier != "restricted" {
 		scope = "*"
 	}
 	tok, exp, err := s.newToken(s.db.W, c.a.ID, "run", req.GroupID, scope, req.WakeID, runTTL)
 	if err != nil {
 		return nil, err
 	}
+	if _, err := s.db.W.Exec(`UPDATE tokens SET run_session=?, run_host=?, run_tier=? WHERE hash=?`,
+		nullStr(cleanSession(req.Session)), nullStr(cleanLabel(req.Host, 64)), tier, store.Hash(tok)); err != nil {
+		return nil, err
+	}
 	return obj{"token": tok, "expiresAt": exp, "commander": commander, "tier": tier}, nil
+}
+
+func tierRank(t string) int {
+	switch t {
+	case "restricted":
+		return 0
+	case "project":
+		return 1
+	case "full":
+		return 2
+	}
+	return -1
 }
 
 func (s *Server) deleteRunToken(c *ctx) (any, error) {

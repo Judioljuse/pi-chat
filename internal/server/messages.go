@@ -88,7 +88,7 @@ type fileJSON struct {
 // fetchMessages loads messages of gid matching cond (SQL over alias m) as seen by reader.
 func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args ...any) ([]obj, error) {
 	rows, err := q.Query(`SELECT m.seq,m.kind,m.body,m.reply_to,m.hop,m.mention_all,m.created_at,m.recalled_at,
-		COALESCE(m.author_id,''),COALESCE(p.kind,''),COALESCE(mb.nick,p.display_name,''),COALESCE(p.owner_id,''),COALESCE(o.display_name,''),COALESCE(p.platform,'')
+		COALESCE(m.author_id,''),COALESCE(p.kind,''),COALESCE(mb.nick,p.display_name,''),COALESCE(p.owner_id,''),COALESCE(o.display_name,''),COALESCE(p.platform,''),m.via
 		FROM messages m LEFT JOIN principals p ON p.id=m.author_id LEFT JOIN members mb ON mb.group_id=m.group_id AND mb.principal_id=m.author_id
 		LEFT JOIN principals o ON o.id=p.owner_id WHERE m.group_id=?1 AND (`+cond+`) ORDER BY m.seq`, append([]any{gid}, args...)...)
 	if err != nil {
@@ -100,13 +100,17 @@ func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args 
 		var seq, hop, created int64
 		var kind, body, aid, akind, aname, aowner, aownerName, aplatform string
 		var replyTo, recalled sql.NullInt64
+		var via sql.NullString
 		var mall int
-		if err := rows.Scan(&seq, &kind, &body, &replyTo, &hop, &mall, &created, &recalled, &aid, &akind, &aname, &aowner, &aownerName, &aplatform); err != nil {
+		if err := rows.Scan(&seq, &kind, &body, &replyTo, &hop, &mall, &created, &recalled, &aid, &akind, &aname, &aowner, &aownerName, &aplatform, &via); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		m := obj{"seq": seq, "groupId": gid, "kind": kind, "author": nil, "text": body, "mentions": []string{}, "mentionAll": mall != 0,
-			"replyTo": nil, "hop": hop, "files": []fileJSON{}, "createdAt": created, "recalled": recalled.Valid, "new": true}
+			"replyTo": nil, "hop": hop, "files": []fileJSON{}, "createdAt": created, "recalled": recalled.Valid, "new": true, "via": nil}
+		if via.Valid && via.String != "" {
+			m["via"] = json.RawMessage(via.String)
+		}
 		if replyTo.Valid {
 			m["replyTo"] = replyTo.Int64
 		}
@@ -338,6 +342,10 @@ func (s *Server) recall(c *ctx) (any, error) {
 			return errf(400, "recall_expired", "超过 2 分钟，不能撤回")
 		}
 		if _, err := tx.Exec(`UPDATE messages SET recalled_at=? WHERE group_id=? AND seq=?`, now(), gid, seq); err != nil {
+			return err
+		}
+		// A recalled message no longer @s or replies to anyone (badges, inbox, wake commander check).
+		if _, err := tx.Exec(`DELETE FROM mentions WHERE group_id=? AND seq=?`, gid, seq); err != nil {
 			return err
 		}
 		return s.emit(tx, after, gid, "recall", obj{"groupId": gid, "seq": seq})
@@ -603,7 +611,8 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 				}
 			}
 		}
-		if replyKind == "agent" {
+		// Replies notify the replied-to author, human or agent (addT skips self-replies).
+		if replyAuthor != "" && (replyKind == "agent" || replyKind == "human") {
 			addT(replyAuthor, "reply")
 		}
 		if gkind == "dm" {
@@ -642,8 +651,8 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 		if req.ReplyTo != nil {
 			replyTo = *req.ReplyTo
 		}
-		if _, err := tx.Exec(`INSERT INTO messages(group_id,seq,author_id,kind,body,reply_to,hop,mention_all,op_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-			gid, seq, a.ID, "text", req.Text, replyTo, hop, b2i(allOK), nullStr(req.OpKey), now()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO messages(group_id,seq,author_id,kind,body,reply_to,hop,mention_all,op_key,created_at,via) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			gid, seq, a.ID, "text", req.Text, replyTo, hop, b2i(allOK), nullStr(req.OpKey), now(), viaFor(a, c.r)); err != nil {
 			return err
 		}
 		for _, t := range targets {

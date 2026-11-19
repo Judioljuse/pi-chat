@@ -24,6 +24,7 @@ import type { GroupSummary } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { PLATFORM } from '@/lib/format'
 import { PrincipalAvatar } from './avatar'
+import { NotifyBanner } from './notify-banner'
 
 export async function logout() {
   try {
@@ -139,6 +140,7 @@ export function Sidebar({ className }: { className?: string }) {
         )}
       </div>
 
+      <NotifyBanner />
       {me && (
         <div className="shrink-0 border-t border-sidebar-border p-2">
           <DropdownMenu>

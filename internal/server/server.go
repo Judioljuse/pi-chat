@@ -112,6 +112,7 @@ type Server struct {
 
 	hopMu     sync.Mutex
 	blobMu    sync.Mutex // serializes blob creation with the blob sweep
+	agentMu   sync.Mutex // serializes 'agent' runtime broadcasts
 	hopNotice map[string]time.Time
 }
 

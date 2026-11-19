@@ -1,5 +1,7 @@
 import { api, ApiError } from './api'
+import { maybeNotify } from './desktop-notify'
 import {
+  applyAgentEvent,
   fullSync,
   getState,
   loadInfo,
@@ -12,6 +14,7 @@ import {
   setWorking,
   softSync,
 } from './store'
+import type { AgentEvent } from './store'
 import type { Message } from './types'
 
 // everHello survives reconnects so each later hello catches up on the gap.
@@ -41,6 +44,7 @@ export function connectEvents() {
     if (getState().chats[m.groupId]?.loaded) patchChat(m.groupId, (c) => ({ msgs: mergeMsgs(c.msgs, [m]) }))
     markRead(m.groupId)
     refreshGroupsSoon()
+    maybeNotify(m).catch(() => {})
   })
   on<{ groupId: string; seq: number }>('recall', ({ groupId, seq }) => {
     patchMessage(groupId, seq, { recalled: true, text: '', files: [] })
@@ -58,6 +62,9 @@ export function connectEvents() {
   on('groups', () => refreshGroupsSoon())
   on<{ groupId: string; agentId: string; startedAt: number }>('working', ({ groupId, agentId, startedAt }) => {
     if (groupId && agentId) setWorking(groupId, agentId, startedAt || 0)
+  })
+  on<AgentEvent>('agent', (e) => {
+    if (e.agentId && e.state) applyAgentEvent(e)
   })
   on('resync', () => fullSync())
 

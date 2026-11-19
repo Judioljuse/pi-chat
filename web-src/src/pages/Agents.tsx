@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Ellipsis, KeyRound, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { Copy, Ellipsis, KeyRound, Pencil, Plus, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
 import TaskRows, { type TaskRow } from '@/components/beautiful/task-rows'
 import CodeBlock from '@/components/beautiful/code-block'
 import {
@@ -11,6 +11,7 @@ import {
 } from '@/components/motion/dropdown-menu'
 import { Collapsible, CollapsibleContent, CollapsibleIndicator, CollapsibleTrigger } from '@/components/motion/collapsible'
 import { Alert, AlertContent, AlertDescription, AlertIcon } from '@/components/motion/alert'
+import { AgentStateChip } from '@/components/pichat/agent-state'
 import { AgentTag, PrincipalAvatar } from '@/components/pichat/avatar'
 import { useConfirm } from '@/components/pichat/confirm'
 import { CopyField } from '@/components/pichat/copy-field'
@@ -25,8 +26,8 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { api } from '@/lib/api'
-import { fmtTime, PLATFORM } from '@/lib/format'
-import { fail, getState, loadAgents, loadGroups, loadInfo, notify, setState, useStore, workingAgentIds } from '@/lib/store'
+import { copy, fmtTime, PLATFORM } from '@/lib/format'
+import { agentStateOf, fail, getState, loadAgents, loadGroups, loadInfo, notify, setState, useStore, workingAgentIds } from '@/lib/store'
 import type { Agent, Grant, Member } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -239,7 +240,9 @@ function AgentCard({ a }: { a: Agent }) {
     }
   }
 
-  const status = working ? '正在处理' : a.online ? '在线' : a.lastSeenAt ? `最后在线 ${fmtTime(a.lastSeenAt)}` : '从未上线'
+  const state = agentStateOf({ online: a.online, state: a.runtime?.state }, working)
+  const status =
+    state !== 'offline' ? '' : a.lastSeenAt ? `最后在线 ${fmtTime(a.lastSeenAt)}` : '从未上线'
 
   return (
     <Collapsible
@@ -258,8 +261,9 @@ function AgentCard({ a }: { a: Agent }) {
             {a.disabled && <span className="rounded-chip bg-destructive/10 px-1.5 py-px text-[11px] text-destructive">已停用</span>}
           </div>
           <div className="flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
-            <span className={cn('size-1.5 rounded-full', a.online || working ? 'bg-online' : 'bg-border')} />
-            {status}
+            <AgentStateChip state={state} className="text-[12.5px]" />
+            {status && <span>· {status}</span>}
+            {state !== 'offline' && a.runtime?.host && <span className="truncate">· {a.runtime.host}</span>}
           </div>
           {a.intro && <p className="truncate text-[12.5px] text-body">{a.intro}</p>}
         </div>
@@ -314,6 +318,7 @@ function AgentCard({ a }: { a: Agent }) {
           />
         </Row>
 
+        <Runtime a={a} state={state} />
         <NotesEditor a={a} onSave={(ownerNotes) => patch({ ownerNotes })} />
         <Grants a={a} />
         <WakeEditor a={a} />
@@ -626,6 +631,109 @@ function WakeEditor({ a }: { a: Agent }) {
           </AlertContent>
         </Alert>
       )}
+    </Row>
+  )
+}
+
+/** Listener runtime: where it runs, its one main session, how to attach a terminal, and a reset. */
+function Runtime({ a, state }: { a: Agent; state: ReturnType<typeof agentStateOf> }) {
+  const { ask, dialog } = useConfirm()
+  const [busy, setBusy] = useState(false)
+  const rt = a.runtime
+  const main = rt?.session || ''
+  const localName = rt?.name || ''
+  const attachCmd = `node ~/.pichat/pichat-listen.mjs attach --name ${localName || '<本地名>'}`
+  const sessions = a.sessions ?? []
+
+  const reset = async () => {
+    const yes = await ask({
+      title: `重置「${a.displayName}」的会话？`,
+      description:
+        '下次被唤醒时，listener 会开一个全新的主会话，agent 会丢失之前的全部上下文（对话记忆、读过的文件、做到一半的计划）。旧会话的记录还在本机，但不再被使用。',
+      confirmText: '重置会话',
+      destructive: true,
+    })
+    if (!yes) return
+    setBusy(true)
+    try {
+      const r = await api<{ delivered?: boolean }>('POST', `/agents/${a.id}/reset-session`, {})
+      if (r.delivered === false) notify('listener 不在线，没有重置。等它上线后再点一次', 6000)
+      else notify('已通知 listener，下次运行会用新会话')
+      loadAgents().catch(() => {})
+    } catch (e) {
+      fail(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const kv = (label: string, value: React.ReactNode) => (
+    <div className="flex min-w-0 items-center gap-3 py-1.5 text-[13px]">
+      <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-body">{value}</span>
+    </div>
+  )
+
+  return (
+    <Row
+      label="运行状态"
+      hint="listener 对这个 agent 只用一个主会话：所有群、私聊和档位共用同一段上下文。在终端里 attach 时，后台唤醒会排队，退出后再处理。"
+    >
+      <div className="flex flex-col divide-y divide-border rounded-control border border-border px-3">
+        {kv('状态', <AgentStateChip state={state} className="text-[13px]" />)}
+        {kv('主机', rt?.host || <span className="text-muted-foreground">未知</span>)}
+        {kv('本地名', localName ? <span className="font-mono text-[12.5px]">{localName}</span> : <span className="text-muted-foreground">未知</span>)}
+        {kv(
+          '主会话',
+          main ? (
+            <button
+              type="button"
+              onClick={() => copy(main, '已复制会话 ID')}
+              title="复制完整会话 ID"
+              className="-mx-1 inline-flex max-w-full items-center gap-1.5 rounded-chip px-1 font-mono text-[12.5px] transition-colors hover:bg-accent"
+            >
+              <span className="truncate">{main}</span>
+              <Copy className="size-3 shrink-0 text-muted-foreground" />
+            </button>
+          ) : (
+            <span className="text-muted-foreground">还没有（第一次运行时创建）</span>
+          ),
+        )}
+        {rt?.at ? kv('更新于', fmtTime(rt.at)) : null}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[12.5px] text-muted-foreground">在那台机器的终端里接管主会话：</span>
+        <CopyField value={attachCmd} />
+      </div>
+      {sessions.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[12.5px] text-muted-foreground">会话历史</span>
+          <ul className="flex flex-col divide-y divide-border rounded-control border border-border">
+            {sessions.map((x) => (
+              <li key={x.session + x.startedAt} className="flex items-center gap-2 px-3 py-1.5 text-[12.5px]">
+                <button
+                  type="button"
+                  onClick={() => copy(x.session, '已复制会话 ID')}
+                  title={x.session}
+                  className="font-mono text-body tabular-nums transition-colors hover:text-foreground"
+                >
+                  {x.session.slice(0, 8)}
+                </button>
+                {x.session === main && <span className="rounded-chip bg-tag px-1 text-[10.5px] leading-4 text-brand">当前</span>}
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">{x.host}</span>
+                <span className="shrink-0 text-muted-foreground tabular-nums">{fmtTime(x.startedAt)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div>
+        <Button variant="outline" size="sm" disabled={busy} onClick={reset}>
+          <RotateCcw />
+          重置会话
+        </Button>
+      </div>
+      {dialog}
     </Row>
   )
 }

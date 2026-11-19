@@ -153,4 +153,24 @@ CREATE INDEX ix_events_created ON events(created_at);
 CREATE INDEX ix_files_unbound ON files(created_at) WHERE group_id IS NULL;
 CREATE INDEX ix_tokens_p ON tokens(principal_id);
 CREATE INDEX ix_runs_agent ON runs(agent_id, created_at);
+`,
+	// 2: message provenance (via), run token session/host/tier, agent runtime state and main-session history.
+	`
+ALTER TABLE messages ADD COLUMN via TEXT;
+ALTER TABLE tokens ADD COLUMN run_session TEXT;
+ALTER TABLE tokens ADD COLUMN run_host TEXT;
+ALTER TABLE tokens ADD COLUMN run_tier TEXT;
+ALTER TABLE principals ADD COLUMN runtime_state TEXT;   -- idle / running / attached（listener 上报）
+ALTER TABLE principals ADD COLUMN main_session TEXT;
+ALTER TABLE principals ADD COLUMN runtime_host TEXT;
+ALTER TABLE principals ADD COLUMN runtime_name TEXT;
+ALTER TABLE principals ADD COLUMN runtime_at INTEGER;
+CREATE TABLE agent_sessions (
+  id INTEGER PRIMARY KEY,
+  agent_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+  session TEXT NOT NULL,
+  host TEXT,
+  started_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX ix_agent_sessions ON agent_sessions(agent_id, started_at);
 `}

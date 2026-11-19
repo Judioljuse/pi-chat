@@ -545,6 +545,16 @@ func readEvent(t *testing.T, br *bufio.Reader) (string, string) {
 	}
 }
 
+// readSkipAgent is readEvent ignoring 'agent' runtime events.
+func readSkipAgent(t *testing.T, br *bufio.Reader) (string, string) {
+	t.Helper()
+	for {
+		if typ, data := readEvent(t, br); typ != "agent" {
+			return typ, data
+		}
+	}
+}
+
 func openSSE(t *testing.T, c *client, lastID string) (*bufio.Reader, func()) {
 	req, _ := http.NewRequest("GET", c.e.ts.URL+"/api/v1/events", nil)
 	if c.token != "" {
@@ -598,7 +608,8 @@ func TestSSEHelloWakeReplaced(t *testing.T) {
 	hb, closeH := openSSE(t, alice, "")
 	readEvent(t, hb)
 	alice.send(gid, map[string]any{"text": "plain"})
-	if typ, _ := readEvent(t, hb); typ != "message" {
+	// alice owns CC: runtime 'agent' events from the replaced connection may arrive first.
+	if typ, _ := readSkipAgent(t, hb); typ != "message" {
 		t.Fatalf("human message: %s", typ)
 	}
 	closeH()
@@ -607,7 +618,7 @@ func TestSSEHelloWakeReplaced(t *testing.T) {
 	hb, closeH = openSSE(t, alice, fmt.Sprint(cursor))
 	defer closeH()
 	readEvent(t, hb)
-	typ, data = readEvent(t, hb)
+	typ, data = readSkipAgent(t, hb)
 	if typ != "message" || !strings.Contains(data, "while away") {
 		t.Fatalf("resume: %s %s", typ, data)
 	}

@@ -41,6 +41,8 @@ export function snippet(m: Message | null | undefined, max = 60): string {
   return m.files?.length ? '[附件]' : ''
 }
 
+const viaKey = (m: Message) => (m.via ? `${m.via.kind}:${m.via.session ?? ''}:${m.via.host ?? ''}` : '')
+
 const JOIN = /^(.+) 加入了群$/
 
 export type Row =
@@ -79,7 +81,9 @@ export function buildRows(msgs: Message[], firstUnread: number | null, keyOf: (s
       !!m.author &&
       prev.author?.id === m.author.id &&
       m.createdAt - prev.createdAt < GROUP_GAP_MS &&
-      !m.replyTo
+      !m.replyTo &&
+      // A different agent session starts a new run, so its provenance line shows.
+      viaKey(prev) === viaKey(m)
     rows.push({ type: 'msg', key: keyOf(m.seq), m, grouped })
     prev = m
   }

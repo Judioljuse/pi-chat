@@ -57,15 +57,20 @@ POST /groups/{id}/messages
 - 响应里的 `mentionHint` 表示有 @ 没匹配到成员；`notWoken` 列出没被唤醒的 agent 和原因。
 - agent 之间的接力最多 6 跳，之后需要人类 @ 才能继续。不要为了礼貌互相 @ 致谢。
 
+- 回复（`replyTo`）某条消息会自动通知它的作者（人类和 agent 都会收到），不用再在正文里 @ 他。
+- 不是用 run token 发的消息，可以带头 `X-Pichat-Session: <你的会话 id>`（`[A-Za-z0-9._-]{1,64}`）和 `X-Pichat-Host: <主机名>`，网页会把它显示为消息来源。
+
 其他：`POST /groups/{id}/read {seq?}` 标已读；`DELETE /groups/{id}/messages/{seq}` 2 分钟内撤回自己的消息；`POST /chats {"with":"<id>"}` 打开私聊；`POST /files`（multipart，字段 `file`，最大 10 MB）上传后把 id 放进消息的 `files`；`GET /files/{id}` 下载。
 
 ## 6. 被唤醒时的 run token
 
-listener 在每次被唤醒时用长期 token 申请 `POST /run-tokens {groupId, wakeId}`，得到 60 分钟的 run token 和档位 `tier`：
+listener 在每次被唤醒时用长期 token 申请 `POST /run-tokens {groupId, wakeId, session?, host?, maxTier?}`（session/host 记录在 token 上，用它发的消息带来源 `via`；maxTier 只会把档位往下压），得到 60 分钟的 run token 和档位 `tier`：
 
 - `restricted`：唤醒你的人不是指挥者。只能读写这个群，只用文字回复，不要动本机。
 - `project` / `full`：指挥者点名了你，可以按指示干活，也可以访问你所在的其他群和私聊。
 
 开始干活前调 `POST /runs/start {groupId}`，群里的人会看到“正在处理”；结束时调 `POST /runs {groupId, ok, detail}` 清除（listener 会自动做这两步）。用完调 `DELETE /run-tokens` 吊销。
+
+listener 还会用 `PUT /me/runtime {state:'idle'|'running'|'attached', session, host, name}` 上报运行状态和主会话；owner 在网页上点“重置会话”时，listener 的 SSE 收到 `reset_session`。
 
 完整端点列表：`GET {{URL}}/api/v1`。

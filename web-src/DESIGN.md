@@ -68,7 +68,9 @@ Type: UI text uses the system sans stack at 14px (`text-sm` on body; lists use 1
 | Agent run history / recent runs | AI Elements `ai-elements/task` or Beautiful UI `beautiful/task-rows` |
 | Code blocks in markdown | `.md pre` styles; Beautiful UI `beautiful/code-block` for standalone snippets (pairing code, instruction text) |
 | Avatars | `components/pichat/avatar.tsx` `PrincipalAvatar`: humans are round with a hashed warm tint; agents are rounded squares (Claude Code: orange starburst, pi: π on black, others: violet initial). Pass `working` for the small pulsing brand dot (running) and `online` for the static green dot (agent presence); never both. `AgentTag` is the small "agent" label. |
-| Member avatar stack in the chat header | beUI `motion/avatar-group` |
+| Member avatar stack in the chat header | beUI `motion/avatar-group` (agent tooltips append the state, e.g. "CC · 在终端中") |
+| Agent listener state (离线 / 空闲 / 运行中 / 在终端中) | `AgentStateChip` in `components/pichat/agent-state.tsx`; compute the state with `agentStateOf(member, working)` from `lib/store.ts` |
+| Desktop notification prompt | `components/pichat/notify-banner.tsx` (sidebar, dismissible) and the switch on the account page; logic in `lib/desktop-notify.ts` |
 
 ## Messages
 
@@ -76,6 +78,8 @@ Type: UI text uses the system sans stack at 14px (`text-sm` on body; lists use 1
 - Other humans: left-aligned, `bg-card` bubble with `border-border`.
 - Agents: left-aligned with no bubble, plain text like an AI answer. The header shows the platform avatar, name, `AgentTag` and "owner：X". A hover action row (copy, reply, recall) sits below the text, left-aligned and borderless like Nuphos's thumbs row. Touch devices never show it; a long press opens a bottom `sheet` with the same actions. Recall uses `MessageSquareX` in destructive hover color, only while the 2-minute window is open, and always confirms with `alert-dialog`.
 - Read receipts show only on the last message of a run from one author.
+- Agent provenance: when `message.via` is set, a muted 11.5px mono line sits under the agent header: "后台会话 1a2b3c4d · project · host" (run), "终端会话 1a2b3c4d · host" or "外部调用 · host" (direct). Clicking copies the full session id. If `via.session` differs from the author's `mainSession`, an amber "非主会话" tag with a tooltip follows. A change of `via` starts a new run, so the line repeats.
+- Working row: an agent in state `attached` with unread messages in this group shows "CC 正在终端中，消息已排队" instead of the loader.
 - System: small, muted, centered (`MessageMarker`). Consecutive join notices collapse into one line ("Alice、Bob、CC 加入了群").
 - @mentions: `MarkdownText` from `lib/markdown.tsx` renders the pills when given `mentions` (`{nick, kind}`, with kind `human` / `agent` / `me` / `all`). Human pills use `bg-brand-light text-brand`, agent pills are violet, and `me`/`all` pills are amber and bold.
 - Reply quote: one compact line, author name plus `plainText(text)` (markdown stripped).
@@ -96,7 +100,8 @@ Type: UI text uses the system sans stack at 14px (`text-sm` on body; lists use 1
 - `lib/api.ts`: `api(method, path, body)` returns parsed JSON and throws `ApiError {status, code, data}`. A 401 outside `/auth/*` calls the unauthorized handler, which logs out to `#/login`.
 - `lib/store.ts`: an immutable external store. Read it with `useStore(selector)`, where the selector must return existing references and must not build new objects or arrays. Write with `setState` / `patchChat` / `patchMessage` / `patchMember`. Data loaders: `loadGroups`, `loadInfo`, `openChat`, `catchUp`, `loadOlder`, `loadQuote`, `markRead`, `loadAgents`.
 - `state.working[groupId][agentId] = startedAt` is fed by the SSE `working` event (`startedAt: 0` means finished), by `GET /groups/{id}` `working: [{agentId, startedAt}]`, and by `GET /groups` `working: [agentId]`.
-- `lib/events.ts`: one `EventSource` for the whole app, handling hello, message, recall, read, group, groups, working and resync, with reconnect after 5s.
+- `lib/events.ts`: one `EventSource` for the whole app, handling hello, message, recall, read, group, groups, working, agent and resync, with reconnect after 5s. `agent {agentId, state, session, host, name}` goes through `applyAgentEvent`, which patches every group's member and `state.agents[].runtime`.
+- Tab notifications: `document.title` is "(N) pichat" with N = total unread. `setFaviconBadge` draws a red dot on the icon with a canvas while any group has `mentionsMe > 0` (the server counts @me, replies to me and DMs) or a DM has unread messages. The page CSP allows `blob:` images and not `data:`, so the badge uses an object URL. `maybeNotify` shows a desktop `Notification` for @me / reply to me / DM when the tab is hidden or unfocused or that group is not open. The permission is requested only from a click, and the click on a notification sets `state.focus` and opens the group, where `MessageList` scrolls to the message.
 - `lib/router.ts`: hash routes `#/login`, `#/redeem/<code>`, `#/`, `#/g/<id>`, `#/g/<id>/settings`, `#/agents`, `#/admin`, `#/me`.
 - `lib/format.ts`: time, size and elapsed formatting, `copy()`, `randId()`, and the label maps (`ROLE`, `PLATFORM`, `NOT_WOKEN`).
 - beUI components read their strings through `LocaleProvider` with `lib/beui-zh.ts`. Add Chinese strings there when you add a beUI component that has messages.

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { api, setUnauthorizedHandler } from '@/lib/api'
+import { setFaviconBadge } from '@/lib/desktop-notify'
 import { closeEvents, connectEvents, eventsAlive } from '@/lib/events'
 import { parseRoute, syncRoute, takeAfterLogin } from '@/lib/router'
 import { fail, getState, loadGroups, notify, resetState, setState, softSync, useStore } from '@/lib/store'
@@ -100,6 +101,8 @@ export default function App() {
   const route = useStore((s) => s.route)
   const me = useStore((s) => s.me)
   const unread = useStore((s) => s.groups.reduce((n, g) => n + (g.unread || 0), 0))
+  // mentionsMe includes @me, replies to me and DMs (server counts reasons mention/dm/reply).
+  const hot = useStore((s) => s.groups.some((g) => g.mentionsMe > 0 || (g.kind === 'dm' && g.unread > 0)))
 
   useEffect(() => {
     const onLogin = async (e: Event) => {
@@ -160,8 +163,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title = unread ? `(${unread}) pichat` : 'pichat'
+    document.title = unread ? `(${unread > 99 ? '99+' : unread}) pichat` : 'pichat'
   }, [unread])
+
+  useEffect(() => setFaviconBadge(!!me && hot), [me, hot])
 
   let body
   if (boot) body = <Empty className="h-dvh">加载中…</Empty>

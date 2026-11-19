@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 import { api, ApiError, errorText } from './api'
-import type { Agent, Group, GroupSummary, Me, Member, Message, Working } from './types'
+import type { Agent, AgentState, Group, GroupSummary, Me, Member, Message, Working } from './types'
 
 export type Route =
   | { name: 'home' }
@@ -33,6 +33,8 @@ export interface State {
   /** groupId -> agentId -> startedAt (ms). */
   working: Record<string, Record<string, number>>
   agents: Agent[] | null
+  /** A message to scroll to once its chat is open (desktop notification click). */
+  focus: { gid: string; seq: number } | null
 }
 
 const initial = (): State => ({
@@ -44,6 +46,7 @@ const initial = (): State => ({
   chats: {},
   working: {},
   agents: null,
+  focus: null,
 })
 
 let state: State = initial()
@@ -138,6 +141,63 @@ export function workingAgentIds(s: Pick<State, 'working'>): Set<string> {
   const ids = new Set<string>()
   for (const g of Object.values(s.working)) for (const id of Object.keys(g)) ids.add(id)
   return ids
+}
+
+// ---- agent runtime ----
+
+export interface AgentEvent {
+  agentId: string
+  state: AgentState
+  session?: string | null
+  host?: string | null
+  name?: string | null
+}
+
+/** Apply a live 'agent' SSE event to every group member list and to my agents page. */
+export function applyAgentEvent(e: AgentEvent) {
+  setState((s) => {
+    const info: Record<string, Group> = {}
+    for (const [gid, g] of Object.entries(s.info)) {
+      if (!g.members.some((m) => m.id === e.agentId)) {
+        info[gid] = g
+        continue
+      }
+      info[gid] = {
+        ...g,
+        members: g.members.map((m) =>
+          m.id === e.agentId
+            ? { ...m, state: e.state, online: e.state !== 'offline', mainSession: e.session ?? m.mainSession }
+            : m,
+        ),
+      }
+    }
+    const agents =
+      s.agents?.map((a) =>
+        a.id === e.agentId
+          ? {
+              ...a,
+              online: e.state !== 'offline',
+              runtime: {
+                ...a.runtime,
+                state: e.state,
+                session: e.session ?? a.runtime?.session,
+                host: e.host ?? a.runtime?.host,
+                name: e.name ?? a.runtime?.name,
+                at: Date.now(),
+              },
+            }
+          : a,
+      ) ?? null
+    return { info, agents }
+  })
+}
+
+/** Effective state: no SSE connection means offline whatever was stored; a live run means running. */
+export function agentStateOf(m: { online?: boolean; state?: AgentState | null }, working = false): AgentState {
+  if (m.online === false || m.state === 'offline') return 'offline'
+  if (m.state === 'attached') return 'attached'
+  if (working || m.state === 'running') return 'running'
+  return m.online || m.state ? 'idle' : 'offline'
 }
 
 // ---- data ----

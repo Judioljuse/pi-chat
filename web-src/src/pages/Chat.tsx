@@ -20,7 +20,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { api, ApiError, errorText } from '@/lib/api'
 import { randId } from '@/lib/format'
-import { fail, getState, markRead, mergeMsgs, openChat, patchChat, patchMessage, useStore } from '@/lib/store'
+import { agentStateOf, fail, getState, markRead, mergeMsgs, openChat, patchChat, patchMessage, useStore } from '@/lib/store'
 import type { Message, SendResult } from '@/lib/types'
 
 const EMPTY_WORKING: Record<string, number> = {}
@@ -68,16 +68,33 @@ export function Chat({ gid }: { gid: string }) {
   }, [gid])
 
   const workingIds = useMemo(() => new Set(Object.keys(working)), [working])
-  const workingAgents = useMemo<WorkingAgent[]>(
-    () =>
-      Object.entries(working)
-        .sort((a, b) => a[1] - b[1])
-        .map(([id, startedAt]) => {
-          const m = info?.members.find((x) => x.id === id)
-          return { id, name: m ? memberName(m) : 'agent', platform: m?.platform, startedAt }
-        }),
-    [working, info?.members],
-  )
+  const lastSeq = chat?.msgs.at(-1)?.seq ?? info?.lastSeq ?? 0
+  const workingAgents = useMemo<WorkingAgent[]>(() => {
+    const rows: WorkingAgent[] = Object.entries(working)
+      .sort((a, b) => a[1] - b[1])
+      .map(([id, startedAt]) => {
+        const m = info?.members.find((x) => x.id === id)
+        return { id, name: m ? memberName(m) : 'agent', platform: m?.platform, startedAt }
+      })
+    // Attached agents with an unread message aimed at them here (@, @all, reply to them, DM):
+    // the listener queues that wake until the terminal session ends.
+    const msgs = chat?.msgs ?? []
+    const bySeq = new Map(msgs.map((x) => [x.seq, x]))
+    const aimedAt = (id: string, after: number) =>
+      msgs.some(
+        (x) =>
+          x.seq > after &&
+          x.kind === 'text' &&
+          !x.recalled &&
+          x.author &&
+          x.author.id !== id &&
+          (info?.kind === 'dm' || x.mentionAll || x.mentions?.includes(id) || (x.replyTo != null && bySeq.get(x.replyTo)?.author?.id === id)),
+      )
+    for (const m of info?.members ?? [])
+      if (m.kind === 'agent' && !working[m.id] && agentStateOf(m) === 'attached' && (m.lastReadSeq || 0) < lastSeq && aimedAt(m.id, m.lastReadSeq || 0))
+        rows.push({ id: m.id, name: memberName(m), platform: m.platform, startedAt: 0, attached: true })
+    return rows
+  }, [working, info?.members, info?.kind, lastSeq, chat?.msgs])
   const mentions = useMemo(() => mentionTargets(info?.members ?? [], meId), [info?.members, meId])
 
   // ---- send ----
@@ -178,7 +195,7 @@ export function Chat({ gid }: { gid: string }) {
   const ready = info && chat?.loaded
   return (
     <div className="flex h-full min-h-0 flex-col" style={{ '--panel': wide && membersOpen && info ? '280px' : '0px' } as CSSProperties}>
-      <ChatHeader gid={gid} info={info} summary={summary} onMembers={() => setMembersOpen((o) => !o)} />
+      <ChatHeader gid={gid} info={info} summary={summary} onMembers={() => setMembersOpen((o) => !o)} workingIds={workingIds} />
       <div className="flex min-h-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" {...(ready ? dnd : {})}>
           {!ready ? (

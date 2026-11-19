@@ -17,7 +17,7 @@ import { fileUrl } from '@/lib/api'
 import { EASE_OUT } from '@/lib/ease'
 import { copy, fmtSize, fmtTime } from '@/lib/format'
 import { MarkdownText, type MentionTarget } from '@/lib/markdown'
-import type { FileRef, Member, Message as Msg } from '@/lib/types'
+import type { FileRef, Member, Message as Msg, Via } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { INLINE_IMG, isCoarse, RECALL_MS, snippet, type Pending } from './util'
 
@@ -128,6 +128,47 @@ function Quote({ seq, quoted, onJump, fill }: { seq: number; quoted?: Msg | null
     >
       <span className="shrink-0 font-medium text-body">{quoted?.author?.name ?? `#${seq}`}</span>
       <span className="min-w-0 truncate">{quoted ? snippet(quoted) : '…'}</span>
+    </button>
+  )
+}
+
+/** "后台会话 1a2b3c4d · project · host" under an agent message, plus a warning when it isn't the agent's main session. */
+function Provenance({ via, mainSession }: { via: Via; mainSession?: string | null }) {
+  const sid = via.session || ''
+  const short = sid.slice(0, 8)
+  const host = via.host || ''
+  const parts =
+    via.kind === 'run'
+      ? ['后台会话' + (short ? ` ${short}` : ''), via.tier, host]
+      : sid
+        ? [`终端会话 ${short}`, host]
+        : ['外部调用', host]
+  const label = parts.filter(Boolean).join(' · ')
+  const offMain = !!sid && !!mainSession && sid !== mainSession
+  const body = (
+    <span className="inline-flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
+      <span className="min-w-0 truncate font-mono tabular-nums">{label}</span>
+      {offMain && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="shrink-0 rounded-chip bg-mention-me-light px-1 font-sans text-[10.5px] leading-4 font-medium text-warning">非主会话</span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-72">
+            这条消息不是由该 agent 的主会话发出的（主会话 {mainSession.slice(0, 8)}）
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </span>
+  )
+  if (!sid) return body
+  return (
+    <button
+      type="button"
+      title={`会话 ${sid}（点击复制）`}
+      onClick={() => copy(sid, '已复制会话 ID')}
+      className="-mx-1 flex max-w-full min-w-0 rounded-chip px-1 text-left transition-colors hover:bg-accent"
+    >
+      {body}
     </button>
   )
 }
@@ -268,6 +309,7 @@ export const MessageItem = memo(function MessageItem({
         )}
         {isAgent ? (
           <div className="flex w-full min-w-0 flex-col items-start gap-1">
+            {m.via && !grouped && <Provenance via={m.via} mainSession={author?.mainSession} />}
             {quote}
             {text && (
               <MessageBubble variant="ghost">

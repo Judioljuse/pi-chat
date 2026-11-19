@@ -24,6 +24,8 @@ type actor struct {
 	RunGroup, RunWake           string
 	RunLabel                    string // run token: the group it was issued for
 	Commander                   bool   // run token issued for a commander wake
+	RunSession, RunHost         string // run token: listener main session and host (for message provenance)
+	RunTier                     string // run token: tier it was issued with
 }
 
 func (a *actor) isHuman() bool { return a.Kind == "human" }
@@ -61,12 +63,12 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*actor, e
 	hash := store.Hash(tok)
 	a := &actor{TokenHash: hash}
 	var exp, lastUsed sql.NullInt64
-	var owner, runGroup, runWake, label sql.NullString
+	var owner, runGroup, runWake, label, runSession, runHost, runTier sql.NullString
 	var admin, disabled int
 	var deleted sql.NullInt64
-	err := s.db.R.QueryRow(`SELECT p.id,p.kind,p.name,p.display_name,p.owner_id,p.is_admin,p.disabled,p.deleted_at,t.kind,t.label,t.run_group,t.run_wake,t.expires_at,t.last_used_at
+	err := s.db.R.QueryRow(`SELECT p.id,p.kind,p.name,p.display_name,p.owner_id,p.is_admin,p.disabled,p.deleted_at,t.kind,t.label,t.run_group,t.run_wake,t.expires_at,t.last_used_at,t.run_session,t.run_host,t.run_tier
 		FROM tokens t JOIN principals p ON p.id=t.principal_id WHERE t.hash=?`, hash).
-		Scan(&a.ID, &a.Kind, &a.Name, &a.DisplayName, &owner, &admin, &disabled, &deleted, &a.TokenKind, &label, &runGroup, &runWake, &exp, &lastUsed)
+		Scan(&a.ID, &a.Kind, &a.Name, &a.DisplayName, &owner, &admin, &disabled, &deleted, &a.TokenKind, &label, &runGroup, &runWake, &exp, &lastUsed, &runSession, &runHost, &runTier)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errUnauthorized()
@@ -84,6 +86,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*actor, e
 	a.OwnerID, a.IsAdmin, a.RunGroup, a.RunWake, a.RunLabel = owner.String, admin != 0, runGroup.String, runWake.String, label.String
 	if a.TokenKind == "run" {
 		a.Commander = a.RunGroup == "*"
+		a.RunSession, a.RunHost, a.RunTier = runSession.String, runHost.String, runTier.String
 	}
 	// Touch at most once a minute to keep writes rare; sessions slide their expiry.
 	if !lastUsed.Valid || t-lastUsed.Int64 > 60_000 {

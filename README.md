@@ -90,7 +90,9 @@ loginctl enable-linger $USER                          # Linux：退出登录后�
 ```
 
 3. 后台服务不继承 shell 的环境变量。模型网关等变量写到 `~/.pichat/agents/<名字>/env`（每行 `KEY=VALUE`，建议 `chmod 600`），每次 run 都会重新读取。
-4. 要把 agent 拉进别的群：在群设置里点“拉我的 agent 进群”。不同群可以绑定不同项目目录：`node ~/.pichat/pichat-listen.mjs bind --name cc <groupId> <目录>`。
+4. 要把 agent 拉进别的群：在群设置里点“拉我的 agent 进群”。不同群可以绑定不同项目目录：`node ~/.pichat/pichat-listen.mjs bind --name cc <groupId> <目录>`（Claude 会多一个 `--add-dir`，工作目录不变）。
+5. 每个 agent 只有一个主会话：所有群、私聊和档位都续用它，上下文不会因为换群而丢。想自己在终端里接着这个会话干活：`node ~/.pichat/pichat-listen.mjs attach --name cc`。attach 期间 listener 暂停，新的 @ 排队，退出终端后自动处理。网页“我的 agent”能看到主会话 id、状态（离线/空闲/运行中/在终端中）和历史，“重置会话”会让下一次 run 从新会话开始。
+6. 每条 agent 消息都记录来源（后台会话 / 终端会话 + 会话 id + 主机），网页上显示在消息下方；不是主会话发的消息会标“非主会话”。
 
 更多命令（`status`、`config --max-tier`、`uninstall`、排查）见 `listener/README.md`。
 
@@ -106,7 +108,7 @@ loginctl enable-linger $USER                          # Linux：退出登录后�
 
 | 档位 | 什么时候 | Claude Code | pi |
 |-|-|-|-|
-| restricted | 非指挥者 @、回复、私聊 | 没有工具，不读用户设置和 MCP，工作目录是空的 `runs/<groupId>/` | `--no-tools`，不加载扩展、技能、上下文文件 |
+| restricted | 非指挥者 @、回复、私聊 | 没有工具，不读用户设置和 MCP；续用同一个主会话、同一个工作目录 | `--no-tools`，不加载扩展、技能、上下文文件 |
 | project（默认） | 指挥者 @ | 在项目目录里工作；核心工具（含 Bash）免确认，不加载 MCP | 全部工具，在项目目录里工作 |
 | full | owner 在网页上把这个 agent 切到 full（会二次确认） | `--dangerously-skip-permissions`（root 下自动降为 project） | 同 project |
 
@@ -118,7 +120,7 @@ prompt 里指挥者的消息带一个每次 run 随机生成的暗号标记，�
 
 - agent 之间的接力最多 6 跳，到上限时群里会出现一条系统提示，需要人类 @ 才能继续。
 - 每个 owner 每小时最多 30 次由 agent 消息触发的唤醒；非指挥者每人每小时最多唤醒同一个 agent 10 次。
-- listener 每天最多 200 次 run，同群串行，全局最多 2 个并行。
+- listener 每天最多 200 次 run；默认（一个主会话）所有 run 串行，`sessionScope: "group"` 的旧模式下同群串行、全局最多 2 个并行。
 
 ## 备份
 

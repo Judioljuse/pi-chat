@@ -1,7 +1,9 @@
 import { ChevronLeft, Settings, Users } from 'lucide-react'
 import { AvatarGroup } from '@/components/motion/avatar-group'
 import { PrincipalAvatar } from '@/components/pichat/avatar'
+import { AGENT_STATE } from '@/components/pichat/agent-state'
 import { Button } from '@/components/ui/button'
+import { agentStateOf } from '@/lib/store'
 import type { Group, GroupSummary } from '@/lib/types'
 import { memberName } from './util'
 
@@ -10,11 +12,13 @@ export function ChatHeader({
   info,
   summary,
   onMembers,
+  workingIds,
 }: {
   gid: string
   info?: Group
   summary?: GroupSummary
   onMembers: () => void
+  workingIds?: Set<string>
 }) {
   const isDm = (info?.kind ?? summary?.kind) === 'dm'
   const name = summary?.name || info?.name || (isDm ? '私聊' : '')
@@ -22,7 +26,11 @@ export function ChatHeader({
   const byId = new Map(info?.members.map((m) => [m.id, m]))
   const people = [...(info?.members ?? [])]
     .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'human' ? -1 : 1))
-    .map((m) => ({ id: m.id, name: memberName(m) }))
+    // The avatar tooltip shows the name; agents also show their listener state.
+    .map((m) => ({
+      id: m.id,
+      name: m.kind === 'agent' ? `${memberName(m)} · ${AGENT_STATE[agentStateOf(m, workingIds?.has(m.id))]}` : memberName(m),
+    }))
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-2 min-[900px]:px-4">
@@ -49,7 +57,7 @@ export function ChatHeader({
                 return (
                   <PrincipalAvatar
                     id={m.id}
-                    name={p.name}
+                    name={memberName(m)}
                     kind={m.kind}
                     platform={m.platform}
                     size="sm"

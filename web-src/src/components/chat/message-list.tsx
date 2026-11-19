@@ -8,7 +8,7 @@ import { WorkingIndicator, type WorkingAgent } from '@/components/pichat/working
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { copy, fmtTime } from '@/lib/format'
 import type { MentionTarget } from '@/lib/markdown'
-import { fail, loadOlder, loadQuote, notify, type ChatState } from '@/lib/store'
+import { fail, loadOlder, loadQuote, notify, setState, useStore, type ChatState } from '@/lib/store'
 import type { Group, Message } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { MessageItem } from './message-item'
@@ -169,6 +169,14 @@ function Rows({
     },
     [gid, scrollRef, ctx, reduce],
   )
+
+  // Desktop notification click: scroll to that message once this chat is on screen.
+  const focus = useStore((s) => s.focus)
+  useEffect(() => {
+    if (!focus || focus.gid !== gid) return
+    setState({ focus: null })
+    jump(focus.seq)
+  }, [focus, gid, jump])
 
   return (
     <>

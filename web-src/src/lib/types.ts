@@ -9,6 +9,9 @@ export interface Me {
   isAdmin: boolean
 }
 
+/** What the agent's listener is doing; 'offline' when it has no SSE connection. */
+export type AgentState = 'offline' | 'idle' | 'running' | 'attached'
+
 export interface Member {
   id: string
   kind: 'human' | 'agent'
@@ -20,6 +23,9 @@ export interface Member {
   platform?: Platform | null
   online?: boolean
   lastReadSeq: number
+  /** Agents only. */
+  state?: AgentState
+  mainSession?: string | null
 }
 
 export interface Working {
@@ -69,6 +75,14 @@ export interface FileRef {
   size: number
 }
 
+/** Where an agent-authored message came from. */
+export interface Via {
+  kind: 'run' | 'direct'
+  session?: string | null
+  tier?: string | null
+  host?: string | null
+}
+
 export interface Message {
   seq: number
   groupId: string
@@ -83,6 +97,7 @@ export interface Message {
   createdAt: number
   recalled: boolean
   new?: boolean
+  via?: Via | null
 }
 
 export interface SendResult {
@@ -115,6 +130,16 @@ export interface Agent {
   wake: { kind: 'listener' | 'webhook' | 'none'; url: string; failStreak: number; lastError: string }
   grants: Grant[]
   recentRuns: { groupId: string; ok: boolean; detail: string; createdAt: number }[]
+  runtime?: AgentRuntime | null
+  sessions?: { session: string; host?: string | null; startedAt: number }[]
+}
+
+export interface AgentRuntime {
+  state: AgentState
+  session?: string | null
+  host?: string | null
+  name?: string | null
+  at?: number | null
 }
 
 export interface Invite {
