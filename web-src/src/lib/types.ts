@@ -144,6 +144,35 @@ export interface AgentRuntime {
   at?: number | null
   notice?: string | null
   noticeAt?: number | null
+  /** Listener script the listener reported; latest: same as the one this server serves. */
+  listener?: { sha256: string; version: string; autoUpdate: boolean; skip?: 'git' | 'readonly' | null; latest: boolean } | null
+}
+
+export interface UpdateRelease {
+  tag: string
+  name: string
+  publishedAt: string
+  notes: string
+  htmlUrl: string
+  asset: { name: string; size: number } | null
+}
+
+export type UpdatePhase = 'idle' | 'downloading' | 'verifying' | 'restarting' | 'error'
+
+export interface UpdateStatus {
+  enabled: boolean
+  disabledReason?: string
+  current: string
+  builtin: string
+  running: 'builtin' | 'installed'
+  platform: string
+  repo: string
+  latest: UpdateRelease | null
+  available: boolean
+  checkedAt: number
+  error?: string
+  state: { phase: UpdatePhase; bytes: number; total: number; error?: string }
+  installed: { version: string; path: string; installedAt: number; failed?: boolean } | null
 }
 
 export interface Invite {

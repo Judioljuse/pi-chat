@@ -19,6 +19,7 @@ const TIERS = ['restricted', 'project', 'full'];
 const AGENTS = { claude: 'claude_code', pi: 'pi' };
 const PROJECT_TOOLS = 'Bash Read Edit Write MultiEdit Glob Grep LS NotebookEdit TodoWrite WebFetch WebSearch';
 const QUIET_MS = 90e3, INBOX_EVERY = 10 * 60e3, IDLE_MS = 15 * 60e3, MAX_MS = 60 * 60e3;
+const SELF_UPDATE_EVERY = 10 * 60e3, SELF_UPDATE_POLL_MS = 15e3, RESTART_EXIT = 75;
 const RETRY_MS = 5 * 60e3, MAX_PARALLEL = 2, DAILY_CAP = 200, MAX_TEXT = 10000, EXIT_GRACE_MS = 1000, EXTERNAL_POLL_MS = 5000;
 
 // ---------- args & files ----------
@@ -131,6 +132,7 @@ function cmdConfig({ opt }) {
   if (opt.model !== undefined) c.model = opt.model === true || opt.model === '-' ? '' : opt.model;
   if (opt.server) c.server = String(opt.server).replace(/\/+$/, '');
   if (opt['session-scope']) { if (!['agent', 'group'].includes(opt['session-scope'])) die('--session-scope 只能是 agent 或 group'); c.sessionScope = opt['session-scope']; }
+  if (opt['auto-update'] !== undefined) { if (!['on', 'off'].includes(opt['auto-update'])) die('--auto-update 只能是 on 或 off'); c.autoUpdate = opt['auto-update'] === 'on'; }
   writeJSON(path.join(a.dir, 'config.json'), c);
   console.log(JSON.stringify(c, null, 2));
   console.log('如果 listener 正在运行，修改会在下一次 run 生效（agent 类型和 server 需要重启）。');
@@ -250,6 +252,19 @@ function unitInfo(name) {
   return { kind: 'systemd', unit, file: path.join(os.homedir(), '.config', 'systemd', 'user', unit) };
 }
 
+// supervisedBy reports whether this process runs under the systemd unit / launchd job of listener name.
+function supervisedBy(name) {
+  const env = process.env;
+  if (env.PICHAT_SUPERVISED === '1') return true;
+  const u = unitInfo(name);
+  if (u.kind === 'launchd') return env.XPC_SERVICE_NAME === u.label;
+  if (!env.INVOCATION_ID) return false;
+  try {
+    return fs.readFileSync('/proc/self/cgroup', 'utf8').split('\n')
+      .some((l) => l.split(':').slice(2).join(':').split('/').pop() === u.unit);
+  } catch { return false; }
+}
+
 const xml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const sdq = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/%/g, '%%')}"`;
 
@@ -274,6 +289,7 @@ ExecStart=${sdq(process.execPath)} ${sdq(SCRIPT)} run --name ${a.name}
 Restart=on-failure
 RestartSec=10
 Environment=${sdq('PATH=' + process.env.PATH)}
+Environment=PICHAT_SUPERVISED=1
 
 [Install]
 WantedBy=default.target
@@ -294,7 +310,7 @@ WantedBy=default.target
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(process.env.PATH)}</string></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(process.env.PATH)}</string><key>PICHAT_SUPERVISED</key><string>1</string></dict>
   <key>StandardOutPath</key><string>${xml(log)}</string>
   <key>StandardErrorPath</key><string>${xml(log)}</string>
 </dict></plist>
@@ -348,6 +364,8 @@ function cmdStatus({ opt }) {
   console.log(`今日 run：${st.daily?.date === today() ? st.daily.count : 0}/${DAILY_CAP}，会话范围：${scope}${scope === 'agent'
     ? `，主会话：${st.main?.id || '（还没有）'}${st.main ? `（目录 ${st.main.cwd}）` : ''}` : `，会话数：${Object.keys(st.sessions || {}).length}`}`);
   if (lockAlive(path.join(a.dir, 'attach.lock'))) console.log('终端：正在 attach 中，listener 暂停处理新消息');
+  const self = selfInfo();
+  console.log(`listener 脚本：${self.path}（sha256 ${self.sha256.slice(0, 12)}，来自服务端 ${self.version}），自动更新：${autoUpdateOn(a.config) ? '开' : '关'}`);
   console.log(`env 文件：${fs.existsSync(path.join(a.dir, 'env')) ? Object.keys(readEnvFile(a.dir)).join(', ') || '（空）' : '（无）'}`);
   try {
     const lines = fs.readFileSync(path.join(a.dir, 'listen.log'), 'utf8').trimEnd().split('\n').slice(-10);
@@ -402,6 +420,10 @@ class Listener {
     const body = { state, host: HOST, name: this.name };
     if (this.scope === 'agent' && this.state.main?.id) body.session = this.state.main.id;
     if (notice !== undefined) body.notice = notice;
+    body.listener = { sha256: SELF.sha256.slice(0, 12), version: SELF.version, autoUpdate: autoUpdateOn(this.config) };
+    // Why this copy never updates itself, so the web page doesn't promise an update that won't come.
+    this.selfSkip ??= inGitTree(SELF.path) ? 'git' : unwritable(SELF.path) ? 'readonly' : '';
+    if (this.selfSkip) body.listener.skip = this.selfSkip;
     return this.call('PUT', '/me/runtime', body).catch((e) => this.log('上报运行状态失败：', e.message));
   }
 
@@ -495,6 +517,112 @@ class Listener {
     this.attachTimer.unref?.();
   }
 
+  // ---- listener self-update (the server serves a newer pichat-listen.mjs) ----
+
+  // Called on hello with the server's script hash; updates once idle, at most once per 10 minutes.
+  selfUpdateCheck(remote) {
+    const want = String(remote.sha256).toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(want) || want === SELF.sha256) { this.updateTarget = null; return; }
+    if (!autoUpdateOn(this.config)) {
+      if (this.updateSkipLogged !== 'off') { this.updateSkipLogged = 'off'; this.log('服务端有新版 listener，自动更新已关闭（config --auto-update on 打开）'); }
+      return;
+    }
+    if (inGitTree(SELF.path)) {
+      if (this.updateSkipLogged !== 'git') { this.updateSkipLogged = 'git'; this.log('开发目录里的 listener 不自动更新'); }
+      return;
+    }
+    const last = this.state.selfUpdate;
+    // We already replaced the script with this version and restarted, yet still run something else
+    // (another copy of the script, a read-only overlay ...): don't loop.
+    if (last?.target === want && last.from === SELF.sha256) {
+      if (this.updateSkipLogged !== 'loop:' + want) {
+        this.updateSkipLogged = 'loop:' + want;
+        const notice = `listener 自动更新后仍是旧版本（${SELF.path}），请手动更新`;
+        this.log(notice);
+        this.reportRuntime(this.active ? 'running' : 'idle', notice);
+      }
+      return;
+    }
+    const why = unwritable(SELF.path);
+    if (why) {
+      if (this.updateSkipLogged !== 'ro') {
+        this.updateSkipLogged = 'ro';
+        const notice = `listener 有新版本，但 ${why}，无法自动更新`;
+        this.log(notice);
+        if (this.free()) this.reportRuntime(this.active ? 'running' : 'idle', notice);
+      }
+      return;
+    }
+    if (!this.updateTarget || this.updateTarget.sha256 !== want) this.log(`服务端有新版 listener（${want.slice(0, 12)}，服务端 ${remote.version || '?'}），空闲时自动更新`);
+    this.updateTarget = { sha256: want, version: cleanVersion(remote.version) };
+    if (!this.updateTimer) {
+      this.updateTimer = setInterval(() => this.trySelfUpdate(), SELF_UPDATE_POLL_MS);
+      this.updateTimer.unref?.();
+    }
+    this.trySelfUpdate();
+  }
+
+  async trySelfUpdate() {
+    const t = this.updateTarget;
+    if (!t || this.updating || this.stopping) return;
+    // Idle: no job running, no attach, no terminal process using the main session.
+    if (this.active || this.attachLive() || this.extTimer) return;
+    const wait = (this.state.selfUpdate?.at || 0) + SELF_UPDATE_EVERY - Date.now();
+    if (wait > 0) return; // the poll timer retries
+    this.updating = true;
+    try {
+      const res = await fetch(this.config.server + '/pichat-listen.mjs', { signal: AbortSignal.timeout(60e3) });
+      if (!res.ok) throw new Error(`/pichat-listen.mjs -> ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      const got = crypto.createHash('sha256').update(buf).digest('hex');
+      if (got !== t.sha256) throw new Error(`下载的脚本 sha256 是 ${got.slice(0, 12)}，应为 ${t.sha256.slice(0, 12)}（服务端可能刚更新，下次连接时重试）`);
+      const onDisk = fileSha(SELF.path);
+      if (onDisk !== t.sha256) {
+        const mode = fs.statSync(SELF.path).mode & 0o777;
+        const tmp = path.join(path.dirname(SELF.path), `.${path.basename(SELF.path)}.${process.pid}.tmp`);
+        try {
+          fs.writeFileSync(tmp, buf, { mode });
+          fs.chmodSync(tmp, mode);
+          fs.renameSync(tmp, SELF.path);
+        } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
+      }
+      // Recorded only once the script is replaced: the loop guard in selfUpdateCheck relies on it.
+      this.state.selfUpdate = { at: Date.now(), from: SELF.sha256, target: t.sha256 };
+      this.saveState();
+      writeJSON(VERSION_FILE, { sha256: t.sha256, version: t.version });
+      this.log(`listener 已更新：${SELF.sha256.slice(0, 12)} -> ${t.sha256.slice(0, 12)}（服务端 ${t.version}），重启`);
+      this.restartSelf();
+    } catch (e) {
+      this.updating = false;
+      this.state.selfUpdate = { at: Date.now() }; // rate limit only, nothing was replaced
+      this.saveState();
+      this.log('listener 自动更新失败：', e.message);
+      this.pump();
+    }
+  }
+
+  // Exit and come back with the new script: a supervisor restarts us on a non-zero exit,
+  // otherwise spawn a detached copy with the same command line.
+  restartSelf() {
+    this.stopping = true;
+    clearInterval(this.updateTimer);
+    this.clearRunning();
+    if (readJSON(path.join(this.dir, 'listener.json'))?.pid === process.pid) fs.rmSync(path.join(this.dir, 'listener.json'), { force: true });
+    // Units written by `install` set PICHAT_SUPERVISED; older ones are recognised by running in this
+    // listener's own systemd unit (cgroup) or launchd label. Both restart on a non-zero exit
+    // (Restart=on-failure / KeepAlive SuccessfulExit=false), also for units installed before this version.
+    // INVOCATION_ID alone is not enough: every child of any systemd service (terminals, tmux ...) inherits it.
+    if (supervisedBy(this.name)) {
+      this.log(`由服务管理器重启（exit ${RESTART_EXIT}）`);
+      process.exit(RESTART_EXIT);
+    }
+    const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)],
+      { detached: true, stdio: 'inherit', env: process.env, cwd: process.cwd() });
+    child.unref();
+    this.log(`已启动新进程 ${child.pid}，本进程退出`);
+    process.exit(0);
+  }
+
   writeRunning(groupId) { writeJSON(path.join(this.dir, 'running.json'), { ...procId(process.pid), groupId, at: Date.now() }); }
   clearRunning() { fs.rmSync(path.join(this.dir, 'running.json'), { force: true }); }
 
@@ -581,6 +709,7 @@ class Listener {
       this.log('已连接');
       if (this.free()) this.reportRuntime(this.active ? 'running' : 'idle');
       this.pollInbox('hello');
+      if (data.listener?.sha256) this.selfUpdateCheck(data.listener);
     }
     else if (type === 'reset_session') {
       this.log('owner 在网页上重置了会话');
@@ -639,7 +768,7 @@ class Listener {
   }
 
   pump() {
-    if (this.stopping) return;
+    if (this.stopping || this.updating) return;
     const maxParallel = this.scope === 'agent' ? 1 : MAX_PARALLEL;
     while (this.active < maxParallel && this.queue.length) {
       // Claim the agent before checking the attach lock; attach does the reverse,
@@ -683,6 +812,7 @@ class Listener {
             if (this.free()) this.reportRuntime('idle');
           }
           if (g.pending || g.retries.length) this.schedule(gid, g);
+          if (this.active === 0 && this.updateTarget) this.trySelfUpdate();
           this.pump();
         });
     }
@@ -1595,6 +1725,43 @@ function buildPrompt({ nonce, group, msgs, skipped, trigger, tier, cwd, bindDir,
   return out.join('\n') + '\n';
 }
 
+// ---------- self version ----------
+
+// Shared by all agents on this machine: which server version the script on disk came from.
+const VERSION_FILE = path.join(HOME, 'listener-version.json');
+
+function fileSha(f) {
+  try { return crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); } catch { return ''; }
+}
+
+const cleanVersion = (v) => (typeof v === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(v) ? v : 'unknown');
+
+// The running script (symlinks resolved), its sha256 at startup and the server version it came from.
+function selfInfo() {
+  let p = SCRIPT;
+  try { p = fs.realpathSync(SCRIPT); } catch {}
+  const sha256 = fileSha(p);
+  const v = readJSON(VERSION_FILE, {});
+  return { path: p, sha256, version: v.sha256 === sha256 ? cleanVersion(v.version) : 'unknown' };
+}
+const SELF = selfInfo();
+
+const autoUpdateOn = (config) => config?.autoUpdate !== false;
+
+// A checkout (any ancestor has .git) is a developer's copy: never overwrite it.
+function inGitTree(f) {
+  for (let d = path.dirname(f); ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.git'))) return true;
+    if (path.dirname(d) === d) return false;
+  }
+}
+
+function unwritable(f) {
+  try { fs.accessSync(f, fs.constants.W_OK); } catch { return `${f} 不可写`; }
+  try { fs.accessSync(path.dirname(f), fs.constants.W_OK); } catch { return `目录 ${path.dirname(f)} 不可写`; }
+  return '';
+}
+
 // ---------- main ----------
 
 const HELP = `pichat listener
@@ -1605,7 +1772,7 @@ const HELP = `pichat listener
   uninstall --name <名字>
   status --name <名字>
   bind --name <名字> <groupId> <目录>  群绑定项目目录（目录写 - 解除）
-  config --name <名字> [--dir d] [--max-tier restricted|project|full] [--agent claude|pi] [--model m] [--session-scope agent|group]
+  config --name <名字> [--dir d] [--max-tier restricted|project|full] [--agent claude|pi] [--model m] [--session-scope agent|group] [--auto-update on|off]
   api <METHOD> <path> [json]         用 $PICHAT_TOKEN 或 --name 的 token 调 API
   send <groupId> "text" [--reply N] [--mention X] [--raw]  用 $PICHAT_TOKEN 发消息（--raw 不整理 @昵称）
   attach --name <名字>               在终端里接管 agent 的主会话（listener 暂停并排队新消息）

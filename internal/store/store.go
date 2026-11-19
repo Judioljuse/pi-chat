@@ -9,6 +9,7 @@ import (
 	"encoding/base32"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,9 @@ func migrate(db *sql.DB) error {
 	var v int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
 		return err
+	}
+	if v > len(migrations) {
+		slog.Warn("数据库结构比这个程序新（可能是从在线更新的版本回退的），新增的表或列不会被用到", "dbVersion", v, "known", len(migrations))
 	}
 	for i := v; i < len(migrations); i++ {
 		tx, err := db.Begin()

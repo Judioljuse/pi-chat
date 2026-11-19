@@ -178,4 +178,8 @@ CREATE INDEX ix_agent_sessions ON agent_sessions(agent_id, started_at);
 	`
 ALTER TABLE principals ADD COLUMN runtime_notice TEXT;
 ALTER TABLE principals ADD COLUMN runtime_notice_at INTEGER;
+`,
+	// 4: listener script version reported by the listener (JSON {sha256,version,autoUpdate}).
+	`
+ALTER TABLE principals ADD COLUMN runtime_listener TEXT;
 `}

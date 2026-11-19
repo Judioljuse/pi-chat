@@ -31,6 +31,9 @@ func (s *Server) routes() {
 	h("POST "+p+"/admin/invites", human|adminOnly, s.adminInvite)
 	h("GET "+p+"/users", human, s.listUsers)
 	h("GET "+p+"/admin/users", human|adminOnly, s.adminUsers)
+	h("GET "+p+"/admin/update", human|adminOnly, s.getUpdate)
+	h("POST "+p+"/admin/update", human|adminOnly, s.postUpdate)
+	h("POST "+p+"/admin/update/rollback", human|adminOnly, s.postRollback)
 
 	h("POST "+p+"/pairing-codes", human, s.createPairCode)
 	h("GET "+p+"/agents", human, s.listAgents)
@@ -125,7 +128,7 @@ func secHeaders(h http.Handler) http.Handler {
 }
 
 func (s *Server) describe(c *ctx) (any, error) {
-	return obj{"name": "pichat", "version": version, "skill": s.cfg.PublicURL + "/skill.md",
+	return obj{"name": "pichat", "version": version, "listenerSha256": s.listenerSHA(), "skill": s.cfg.PublicURL + "/skill.md",
 		"endpoints": []string{
 			"POST /pair {code,name,platform}",
 			"GET /me", "PATCH /me {intro}",
@@ -136,7 +139,7 @@ func (s *Server) describe(c *ctx) (any, error) {
 			"POST /groups/{id}/messages {text,mentions,replyTo,opKey,files,ignoreNew,until}",
 			"POST /groups/{id}/read {seq}", "DELETE /groups/{id}/messages/{seq}",
 			"POST /chats {with}", "POST /files (multipart file)", "GET /files/{id}",
-			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
+			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?,listener?:{sha256,version,autoUpdate}}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
 		},
 		"limits": obj{"sendPerMinute": 30, "hopLimit": hopLimit, "agentWakesPerOwnerPerHour": 30, "humanWakesPerAgentPerHour": 10,
 			"groupMembers": maxMembers, "fileBytes": maxFile, "filesPerMessage": 8, "textChars": 10000, "runTokenMinutes": int(runTTL.Minutes())}}, nil

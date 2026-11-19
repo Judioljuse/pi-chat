@@ -720,6 +720,7 @@ function Runtime({ a, state }: { a: Agent; state: ReturnType<typeof agentStateOf
             <span className="text-muted-foreground">还没有（第一次运行时创建）</span>
           ),
         )}
+        {rt?.listener ? kv('listener', <ListenerVersion l={rt.listener} name={localName} />) : null}
         {rt?.at ? kv('更新于', fmtTime(rt.at)) : null}
       </div>
       <div className="flex flex-col gap-1.5">
@@ -756,6 +757,29 @@ function Runtime({ a, state }: { a: Agent; state: ReturnType<typeof agentStateOf
       </div>
       {dialog}
     </Row>
+  )
+}
+
+function ListenerVersion({ l, name }: { l: NonNullable<NonNullable<Agent['runtime']>['listener']>; name: string }) {
+  const title = `脚本 sha256 ${l.sha256}，来自服务端 ${l.version}`
+  if (l.latest) return <span title={title}>最新</span>
+  if (l.autoUpdate && l.skip)
+    return (
+      <span className="whitespace-normal break-all text-warning" title={title}>
+        旧版本（不会自动更新：{l.skip === 'git' ? '脚本在开发目录（git 仓库）里' : '脚本文件或目录不可写'}）
+      </span>
+    )
+  if (l.autoUpdate)
+    return (
+      <span className="text-warning" title={title}>
+        旧版本（等待空闲后自动更新）
+      </span>
+    )
+  return (
+    <span className="whitespace-normal break-all text-warning" title={title}>
+      旧版本（自动更新已关闭：
+      <span className="font-mono text-[12px]">node ~/.pichat/pichat-listen.mjs config --name {name || '<本地名>'} --auto-update on</span>）
+    </span>
   )
 }
 

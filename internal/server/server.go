@@ -15,17 +15,18 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"pichat/internal/store"
+	"pichat/internal/update"
 )
 
 //go:embed skill.md
 var skillTemplate string
 
 const (
-	version    = "0.1.0"
 	cookieName = "pichat_session"
 	sessionTTL = 30 * 24 * time.Hour
 	runTTL     = 60 * time.Minute
@@ -40,6 +41,8 @@ type Config struct {
 	TrustedProxies []*net.IPNet
 	// WebhookAllow are extra destination ranges webhooks may reach (internal ranges are blocked by default).
 	WebhookAllow []*net.IPNet
+	// Updater checks and installs releases (nil: online update disabled).
+	Updater *update.Updater
 }
 
 // ParseCIDRs parses a comma-separated list of CIDRs or bare IPs.
@@ -114,6 +117,15 @@ type Server struct {
 	blobMu    sync.Mutex // serializes blob creation with the blob sweep
 	agentMu   sync.Mutex // serializes 'agent' runtime broadcasts
 	hopNotice map[string]time.Time
+
+	// Restart replaces the default restart (SSE notice, shutdown, exec) in tests.
+	Restart      func(path, boot string)
+	upd          *update.Updater
+	updOnce      sync.Once
+	httpSrv      *http.Server
+	restarting   atomic.Bool
+	listenerOnce sync.Once
+	listenerSum  string
 }
 
 func New(cfg Config, db *store.DB, assets Assets) *Server {
@@ -130,6 +142,7 @@ func New(cfg Config, db *store.DB, assets Assets) *Server {
 		hopNotice:    map[string]time.Time{},
 	}
 	s.wk = newWaker(s)
+	s.upd = cfg.Updater
 	s.routes()
 	return s
 }
@@ -148,19 +161,33 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.firstStart(); err != nil {
 		return err
 	}
+	s.checkFilesDir()
 	go s.cleanupLoop(ctx)
 	srv := &http.Server{Addr: s.cfg.Listen, Handler: s.mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+	s.httpSrv = srv
+	s.startUpdates(ctx)
+	if self := update.Detect(version); self.Installed {
+		go update.HealthyAfter(s.cfg.Data, version, time.Minute, ctx.Done())
+	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
-	s.log.Info("pichat listening", "addr", s.cfg.Listen, "url", s.cfg.PublicURL)
+	s.log.Info("pichat listening", "addr", s.cfg.Listen, "url", s.cfg.PublicURL, "version", version)
 	select {
 	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) && s.restarting.Load() {
+			select {} // restartInto shuts down and execs the new binary
+		}
 		return err
 	case <-ctx.Done():
 		s.Close()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return srv.Shutdown(sctx)
+		err := srv.Shutdown(sctx)
+		// A clean stop (docker restart, SIGTERM) is not a failed start: don't let it trip the boot guard.
+		if self := update.Detect(version); self.Installed {
+			update.MarkHealthy(s.cfg.Data, version)
+		}
+		return err
 	}
 }
 

@@ -173,7 +173,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	} else {
 		you, _ = s.agentMe(a)
 	}
-	if !write(encodeEvent(0, "hello", obj{"you": you, "cursor": cursor}).data) {
+	hello := obj{"you": you, "cursor": cursor}
+	if a.isAgent() {
+		hello["listener"] = s.listenerInfo()
+	}
+	if !write(encodeEvent(0, "hello", hello).data) {
 		return
 	}
 	// Replay stored events for humans resuming with Last-Event-ID.

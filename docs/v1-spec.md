@@ -557,3 +557,38 @@ pi -p --mode json --session-id <uuid>
 - listener 主会话的外部使用检测和分叉安全的 resume（8.8）；runtime notice 和 dismiss-notice（6.x、数据库迁移 3）。
 - listener 默认改为每个 agent 一个主会话（sessionScope=agent，8.2 第 5 条），工作目录固定，群绑定改为 `--add-dir`，所有 run 串行，新增 attach/read/inbox 命令和 @ 整理（8.6、8.7）。注意 restricted 档也续用主会话，模型能看到之前指挥者 run 的上下文（仍然没有工具）；需要隔离时用 `--session-scope group`。
 - 新增 `GET /users`（人类用户目录，`?groupId=` 带 `inGroup`）；`POST /groups/{id}/members` 除 `{agentId}` 外接受 `{userId}`，群 owner/admin 直接把已有用户拉进群（见 5、6.4）。网页群设置的「邀请成员」区和聊天顶栏的「邀请」按钮用同一组标签页：已有用户 / 我的 agent / 邀请链接。
+- 版本与在线更新（12）：`internal/version/VERSION` 是版本号的来源，`pichat version` 打印它，`GET /api/v1` 带 `version` 和 `listenerSha256`；新增 `GET/POST /admin/update`、`POST /admin/update/rollback`，SSE `restarting`（全部连接）和 `update`（管理员）。
+- listener 自动更新（12.4）：SSE `hello` 给 agent 带 `listener:{sha256,version}`；`PUT /me/runtime` 可带 `listener:{sha256(前 12 位),version,autoUpdate}`，数据库迁移 4 给 principals 加 `runtime_listener`（已有数据不变），`GET /agents` 的 `runtime.listener` 多一个 `latest`。listener config 新增 `autoUpdate`（默认 true），`install` 写的 systemd/launchd 单元带 `PICHAT_SUPERVISED=1`。
+
+## 12. 版本与更新
+
+### 12.1 版本号与发布
+
+- `internal/version/VERSION`（如 `0.2.0`，不带 v）用 `go:embed` 嵌入，测试构建可用 `-ldflags "-X pichat/internal/version.override=0.1.0"` 覆盖。`pichat version` 只打印版本号。
+- 打 `v<VERSION>` tag 触发 `.github/workflows/release.yml`：tag 必须等于 `v$(cat internal/version/VERSION)`；产物是 `pichat_<ver>_<os>_<arch>`（linux/darwin × amd64/arm64，裸二进制）、`pichat-listen.mjs`、`SHA256SUMS`；发布说明取 `CHANGELOG.md` 里 `## v<ver>` 一节，没有就用 GitHub 自动生成的。
+- `.github/workflows/ci.yml`：push 到 main 和 PR 时跑 go vet、go test、`node --check`，另一个 job 构建网页。
+
+### 12.2 检查与安装（`internal/update`）
+
+配置：`PICHAT_UPDATE=on|off`（默认 on）、`PICHAT_UPDATE_REPO`（默认 `Judioljuse/pi-chat`）、`PICHAT_UPDATE_API`（默认 `https://api.github.com`）、`PICHAT_UPDATE_MIRROR`（可选，下载地址前缀）；同名 `--update*` 参数。非 linux/darwin 自动关闭并给出原因。
+
+- 检查：`GET {API}/repos/{repo}/releases/latest`（`User-Agent: pichat/<ver>`，`Accept: application/vnd.github+json`，15 秒超时），缓存 10 分钟，后台每 12 小时检查一次（启动 1 分钟后第一次）。资产名 `pichat_<tag 去掉 v>_<GOOS>_<GOARCH>`。版本比较 major.minor.patch，带 `-` 后缀的低于同号正式版。
+- `GET /api/v1/admin/update[?refresh=1]`（管理员）→ `{enabled, disabledReason?, current, builtin, running:'builtin'|'installed', platform, repo, latest:{tag,name,publishedAt,notes,htmlUrl,asset:{name,size}|null}|null, available, checkedAt, error?, state:{phase:'idle'|'downloading'|'verifying'|'restarting'|'error', bytes, total, error?}, installed:{version,path,sha256,installedAt,failed?}|null}`。
+- `POST /api/v1/admin/update {tag, password}`（管理员，只接受网页会话；密码校验和限流同 `PATCH /me`，错了 403）→ 202 + 状态，后台执行：按 tag 重新取发布（`/releases/tags/{tag}`）→ 期望摘要取资产的 `digest`（`sha256:<hex>`），没有就从 `SHA256SUMS` 的 `browser_download_url` **直接**下载（不走镜像）找对应行，都没有就报错「无法校验下载内容」→ 下载（有镜像时 `<镜像前缀><原地址>`，上限 200 MB，10 分钟超时）到 `<data>/bin/.dl-*` → 校验 sha256 → chmod 0755 → 运行 `<file> version`（10 秒），输出必须等于版本号，否则「新版本无法在本机运行：…」，EACCES 时「数据目录不允许执行程序（noexec），请用重新构建镜像/替换程序的方式更新」→ 改名为 `<data>/bin/pichat-<ver>` → 原子写 `<data>/bin/current.json {version,path,sha256,installedAt}` → 只保留当前和上一个 → 重启。同一时间只能有一个更新（409 busy）；关闭时 409 `update_disabled`。
+- 网页每秒轮询 GET 显示进度。
+
+### 12.3 重启、启动器和回滚
+
+- 重启：给所有 SSE 连接推 `restarting {version}`，约 300 ms 后关闭所有订阅，`http.Server.Shutdown`（5 秒），checkpoint 并关闭数据库，`syscall.Exec(<新程序>, os.Args, env + PICHAT_BOOT=<ver>, PICHAT_BUILTIN=<内置程序路径>, PICHAT_BUILTIN_VERSION=<内置版本>)`。exec 失败就记日志并 `exit(1)`，由 supervisor（Docker restart / systemd Restart=on-failure）拉起，启动器再处理。
+- 启动器（`serve` 打开数据库之前）：`current.json` 存在、`path` 正好是 `<data>/bin/pichat-<version>`、是普通可执行文件（不是符号链接）、sha256 等于 `current.json` 记录的值（不符时不运行并记 `failed:true`）、版本高于内置版本、`PICHAT_BOOT` 不等于该版本、没有 `failed`、启动保护允许 → `<data>/bin/boot.json {version, attempts}` 加 1 并 exec。attempts ≥ 3 时不再切换，日志 ERROR「新版本 <v> 连续 3 次启动失败，改用内置版本 <b>」，并在 `current.json` 记 `failed:true`（管理页提示）。新程序服务满 60 秒或正常停止（SIGTERM）后把 attempts 清零。重启进新版本前先 `VACUUM INTO <data>/bin/pre-<ver>.db`（只留最近一份）；数据库 `user_version` 比程序知道的迁移多时启动日志 WARN。内置版本 ≥ 已安装版本（手动升级了镜像或二进制）时忽略 `current.json`。启动日志写明运行的是哪个程序和原因。
+- `POST /api/v1/admin/update/rollback {password}`（管理员，同样校验密码）：只在运行已安装版本时可用；删除 `current.json` 和 `boot.json`，重启进 `PICHAT_BUILTIN`（未经启动器启动时就是 `os.Executable()`）。运行内置版本而 `current.json` 记着 `failed:true`（或版本不高于内置版本）时，改为只清除 `current.json`、`boot.json` 和那个程序，不重启，返回 200 `{ok, cleared:true}`（管理页「清除这个版本」）。
+- SSE `update {available, latest}`：后台检查发现新的发布时推给管理员（每个发布一次）。网页侧栏「管理」显示品牌色小圆点。
+- 信任模型：服务器下载并执行所配置 GitHub 仓库发布的程序；必须是管理员、网页会话、输入密码；完整性来自 GitHub API 的摘要或 SHA256SUMS（TLS），镜像只提供字节。
+
+### 12.4 listener 自动更新
+
+- 服务端启动时计算嵌入 listener 脚本的 sha256；agent 的 SSE `hello` 带 `listener:{sha256, version}`（version 为服务端版本），`GET /api/v1` 带 `listenerSha256`。
+- listener 启动时计算自身脚本（解析符号链接后）的 sha256；`PUT /me/runtime` 带 `listener:{sha256 前 12 位, version, autoUpdate}`。version 来自 `<PICHAT_HOME>/listener-version.json`（自动更新时写入，sha256 对得上才用），否则 `unknown`。
+- 收到 hello 且 sha256 不同、`autoUpdate` 开（`config --auto-update on|off`，默认开）：脚本在 git 工作区里（任一上级目录有 `.git`）就跳过并记一次日志「开发目录里的 listener 不自动更新」；脚本或目录不可写就跳过并给 owner 报 notice。否则等空闲（没有 job、没有存活的 attach 锁、没有外部进程占用主会话），`GET <server>/pichat-listen.mjs`，sha256 必须等于 hello 里的，写临时文件再 rename 到真实路径，记日志，然后重启：有 `PICHAT_SUPERVISED=1`、`INVOCATION_ID`（systemd）或 launchd 的 `XPC_SERVICE_NAME` 时以非 0 码（75）退出，由服务管理器重启（老单元是 Restart=on-failure / KeepAlive SuccessfulExit=false，非 0 才会重启）；否则用同样的 execPath/argv/env/cwd 拉起一个 detached 新进程（继承 stdio），然后退出。
+- 限流：每 10 分钟最多一次（时间记在 state.json 的 `selfUpdate`）；重启后 sha256 仍不同（替换的不是实际运行的文件）就不再循环，记日志并报 notice。
+- 网页「我的 agent」运行状态里显示「listener：最新」/「旧版本（等待空闲后自动更新）」/「旧版本（自动更新已关闭：node ~/.pichat/pichat-listen.mjs config --name <n> --auto-update on）」。

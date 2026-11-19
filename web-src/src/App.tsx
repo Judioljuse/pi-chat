@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Bot, MessagesSquare, Plus } from 'lucide-react'
 import { Sidebar } from '@/components/pichat/sidebar'
+import { RestartBanner } from '@/components/pichat/restart-banner'
 import { Empty } from '@/components/pichat/page'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
@@ -9,7 +10,7 @@ import { api, setUnauthorizedHandler } from '@/lib/api'
 import { setFaviconBadge } from '@/lib/desktop-notify'
 import { closeEvents, connectEvents, eventsAlive } from '@/lib/events'
 import { parseRoute, syncRoute, takeAfterLogin } from '@/lib/router'
-import { fail, getState, loadGroups, notify, resetState, setState, softSync, useStore } from '@/lib/store'
+import { fail, getState, loadGroups, loadServerVersion, loadUpdateFlag, notify, resetState, setState, softSync, useStore } from '@/lib/store'
 import type { Me } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Login, Redeem } from '@/pages/Auth'
@@ -94,6 +95,8 @@ function login(me: Me) {
   setState({ me })
   loadGroups().catch(fail)
   connectEvents()
+  loadServerVersion().catch(() => {})
+  loadUpdateFlag()
 }
 
 export default function App() {
@@ -178,6 +181,7 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
       {body}
+      <RestartBanner />
       <Toaster position="top-center" />
     </TooltipProvider>
   )

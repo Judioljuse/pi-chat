@@ -11,6 +11,7 @@ import {
   patchMember,
   patchMessage,
   refreshGroupsSoon,
+  setState,
   setWorking,
   softSync,
 } from './store'
@@ -67,6 +68,10 @@ export function connectEvents() {
     if (e.agentId && e.state) applyAgentEvent(e)
   })
   on('resync', () => fullSync())
+  on<{ available?: boolean }>('update', (e) => {
+    if (getState().me?.isAdmin) setState({ updateAvailable: !!e.available })
+  })
+  on('restarting', () => setState({ restarting: true }))
 
   src.onerror = () => {
     if (src.readyState !== EventSource.CLOSED) return

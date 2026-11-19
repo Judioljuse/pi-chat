@@ -5,11 +5,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"pichat/internal/store"
 )
@@ -52,17 +54,24 @@ func (s *Server) upload(c *ctx) (any, error) {
 		name = truncRunes(name, 200)
 		tmp, err := os.CreateTemp(filepath.Join(s.cfg.Data, "files"), ".up-*")
 		if err != nil {
-			return nil, err
+			return nil, s.storeErr(c, "create temp", err)
 		}
 		defer os.Remove(tmp.Name())
 		h := sha256.New()
 		head := make([]byte, 512)
 		n, _ := io.ReadFull(part, head)
 		head = head[:n]
-		size, err := io.Copy(io.MultiWriter(tmp, h), io.MultiReader(strings.NewReader(string(head)), io.LimitReader(part, maxFile+1-int64(n))))
-		tmp.Close()
+		tw := &trackWriter{w: tmp}
+		size, err := io.Copy(io.MultiWriter(tw, h), io.MultiReader(strings.NewReader(string(head)), io.LimitReader(part, maxFile+1-int64(n))))
+		cerr := tmp.Close()
+		if tw.err != nil {
+			return nil, s.storeErr(c, "write temp", tw.err)
+		}
 		if err != nil {
 			return nil, tooLargeOr(err)
+		}
+		if cerr != nil {
+			return nil, s.storeErr(c, "close temp", cerr)
 		}
 		if size > maxFile {
 			return nil, errf(413, "too_large", "单个文件最大 10 MB")
@@ -83,18 +92,111 @@ func (s *Server) upload(c *ctx) (any, error) {
 		defer s.blobMu.Unlock()
 		if _, err := os.Stat(dst); err != nil {
 			if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-				return nil, err
+				return nil, s.storeErr(c, "mkdir", err)
 			}
 			if err := os.Rename(tmp.Name(), dst); err != nil {
-				return nil, err
+				return nil, s.storeErr(c, "rename", err)
 			}
 		}
 		id := store.NewID("f_")
 		if _, err := s.db.W.Exec(`INSERT INTO files(id,uploader_id,name,mime,size,sha256,created_at) VALUES(?,?,?,?,?,?,?)`,
 			id, c.a.ID, name, mt, size, sum, now()); err != nil {
-			return nil, err
+			return nil, s.storeErr(c, "insert file row", err)
 		}
 		return obj{"file": fileJSON{ID: id, Name: name, Mime: mt, Size: size}}, nil
+	}
+}
+
+// trackWriter records the first write error, so disk errors are not mistaken for client read errors.
+type trackWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (t *trackWriter) Write(p []byte) (int, error) {
+	n, err := t.w.Write(p)
+	if err != nil && t.err == nil {
+		t.err = err
+	}
+	return n, err
+}
+
+// storeErr logs a filesystem or database failure in full and returns a 500
+// whose message names the cause without exposing server paths.
+func (s *Server) storeErr(c *ctx, op string, err error) error {
+	uid := ""
+	if c != nil && c.a != nil {
+		uid = c.a.ID
+	}
+	s.log.Error("保存附件失败", "op", op, "user", uid, "err", err)
+	return errf(500, "storage", "保存附件失败：%s", storeReason(err))
+}
+
+// storeReason maps an error to a short Chinese reason without paths.
+func storeReason(err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch errno {
+		case syscall.EACCES, syscall.EPERM, syscall.EROFS:
+			return "数据目录没有写权限"
+		case syscall.ENOSPC, syscall.EDQUOT:
+			return "磁盘空间不足"
+		}
+		return errno.Error()
+	}
+	var coder interface{ Code() int }
+	if errors.As(err, &coder) {
+		// SQLite primary result codes: 8 READONLY, 13 FULL, 10 IOERR, 5 BUSY.
+		switch coder.Code() & 0xff {
+		case 8:
+			return "数据库只读（检查数据目录权限）"
+		case 13:
+			return "磁盘空间不足"
+		case 5:
+			return "数据库忙，稍后重试"
+		case 10:
+			return "数据库读写出错"
+		}
+		return "数据库错误"
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return "数据目录没有写权限"
+	}
+	return "文件系统错误"
+}
+
+// probeFiles checks that <data>/files accepts create, write, fsync, rename and remove.
+func probeFiles(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".up-probe-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if _, err := f.Write([]byte("pichat probe\n")); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	moved := name + ".mv"
+	if err := os.Rename(name, moved); err != nil {
+		return err
+	}
+	return os.Remove(moved)
+}
+
+func (s *Server) checkFilesDir() {
+	if err := probeFiles(filepath.Join(s.cfg.Data, "files")); err != nil {
+		s.log.Error("附件目录不可写，上传会失败：" + err.Error())
 	}
 }
 

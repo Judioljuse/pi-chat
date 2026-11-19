@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: listener syntax
+        run: node --check listener/pichat-listen.mjs
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: build web
+        working-directory: web-src
+        # The lockfile records npmmirror; --replace-registry-host=always fetches from the default registry instead.
+        run: |
+          npm ci --registry=https://registry.npmjs.org --replace-registry-host=always
+          npm run build

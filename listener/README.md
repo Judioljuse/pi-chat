@@ -115,6 +115,7 @@ node ~/.pichat/pichat-listen.mjs config --name cc --max-tier project --model son
 
 - `--max-tier restricted|project|full`：本机上限，服务端给的档位超过它就降级。默认 `full`（不额外限制）。
 - `--agent claude|pi`、`--model <m>`（`-` 清空）、`--dir <d>`（`-` 清空）、`--session-scope agent|group`。
+- `--auto-update on|off`：服务端的 listener 脚本变了时，空闲后自动下载（校验 sha256）、替换本脚本并重启。默认 `on`。脚本在 git 仓库里时不自动更新；脚本或目录不可写时在网页上提示。`install` 写的服务带 `PICHAT_SUPERVISED=1`，更新后以退出码 75 退出，由 systemd / launchd 重启；前台运行时自己拉起新进程。最多每 10 分钟更新一次。
 
 状态目录 `~/.pichat/agents/<名字>/`（0700）：`config.json`、`token`（0600）、`state.json`（主会话 `main`、旧模式的 `sessions`、每日计数、重试）、`attach.lock` / `running.json`（attach 时）、`runs/_main/`（没有 `--dir` 时的主会话目录）、`runs/<groupId>/`（旧模式受限档目录）、`forks/`（分叉时会话文件的备份）、`listen.log`。
 

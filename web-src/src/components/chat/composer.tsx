@@ -59,6 +59,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [text, setText] = useState(() => sessionStorage.getItem(draftKey(gid)) || '')
   const [items, setItems] = useState<AttachmentUploadItem[]>([])
   const uploaded = useRef(new Map<string, FileRef>())
+  const aborts = useRef(new Map<string, AbortController>())
   const [pop, setPop] = useState<Pop | null>(null)
   const [sel, setSel] = useState('')
   const ta = useRef<HTMLTextAreaElement>(null)
@@ -76,6 +77,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(
     () => () => {
       for (const it of itemsRef.current) if (it.previewUrl) URL.revokeObjectURL(it.previewUrl)
+      for (const ac of aborts.current.values()) ac.abort()
+      aborts.current.clear()
     },
     [],
   )
@@ -83,15 +86,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // ---- attachments ----
 
   const uploadOne = useCallback(async (id: string, file: File) => {
+    aborts.current.get(id)?.abort()
+    const ac = new AbortController()
+    aborts.current.set(id, ac)
     setItems((xs) => xs.map((x) => (x.id === id ? { ...x, status: 'uploading', error: undefined } : x)))
     try {
       const fd = new FormData()
       fd.append('file', file)
-      const { file: f } = await api<{ file: FileRef }>('POST', '/files', fd)
+      const { file: f } = await api<{ file: FileRef }>('POST', '/files', fd, { signal: ac.signal })
+      if (ac.signal.aborted) return
+      aborts.current.delete(id)
       uploaded.current.set(id, f)
       setItems((xs) => xs.map((x) => (x.id === id ? { ...x, status: 'complete' } : x)))
       setTimeout(() => setItems((xs) => xs.map((x) => (x.id === id && x.status === 'complete' ? { ...x, status: 'idle' } : x))), 1000)
     } catch (e) {
+      // Removed by the user (or superseded by a retry): the chip is gone, nothing to report.
+      if (ac.signal.aborted) return
+      aborts.current.delete(id)
       setItems((xs) => xs.map((x) => (x.id === id ? { ...x, status: 'failed', error: errorText(e) } : x)))
     }
   }, [])
@@ -132,6 +143,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const keep = new Set(next.map((x) => x.id))
     for (const it of items)
       if (!keep.has(it.id)) {
+        aborts.current.get(it.id)?.abort()
+        aborts.current.delete(it.id)
         uploaded.current.delete(it.id)
         if (it.previewUrl) URL.revokeObjectURL(it.previewUrl)
       }
@@ -211,19 +224,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const uploading = items.some((x) => x.status === 'uploading')
   const ready = items.filter((x) => uploaded.current.has(x.id))
-  const canSend = !!text.trim() || ready.length > 0
+  const failed = items.filter((x) => x.status === 'failed').length
+  // Failed chips keep the button enabled so a click explains why nothing was sent.
+  const canSend = !!text.trim() || ready.length > 0 || failed > 0
 
   const send = () => {
     const body = text.trim()
-    if (!body && !ready.length) return
     if (uploading) {
-      notify('附件还在上传')
+      notify('附件上传中')
       return
     }
-    if (items.some((x) => x.status === 'failed')) {
-      notify('有附件上传失败，请重试或移除')
+    if (failed) {
+      notify(`有 ${failed} 个附件上传失败：删除或重试后再发送`)
       return
     }
+    if (!body && !ready.length) return
     const mentions = [...picked.current].filter(([nick]) => body.includes('@' + nick)).map(([, id]) => id)
     onSend({ text: body, mentions, replyTo: reply?.seq, files: ready.map((x) => uploaded.current.get(x.id)!) })
     for (const it of items) if (it.previewUrl) URL.revokeObjectURL(it.previewUrl)
@@ -303,7 +318,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       />
       <Popover open={!!pop && candidates.length > 0} onOpenChange={(o) => !o && setPop(null)}>
         <PopoverAnchor asChild>
-          <div>
+          <div className="relative">
             <PromptInput
               value={text}
               onValueChange={(v) => {
@@ -389,6 +404,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               }
               className="rounded-card border-border bg-card px-2 pt-2 pb-1.5 transition-[border-color,box-shadow] focus-within:border-input focus-within:shadow-[0_2px_10px_-4px_rgb(37_37_34/0.10)]"
             />
+            {uploading && (
+              // The disabled send button gets no hover events, so this sits over it to carry the tooltip.
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    role="img"
+                    aria-label="附件上传中"
+                    data-testid="send-uploading"
+                    className="absolute right-2 bottom-1.5 size-8 cursor-not-allowed rounded-full"
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top">附件上传中</TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </PopoverAnchor>
         <PopoverContent

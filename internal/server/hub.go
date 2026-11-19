@@ -27,6 +27,7 @@ type hub struct {
 	mu      sync.Mutex
 	subs    map[string]map[*sub]struct{}
 	waiters map[string]map[chan struct{}]struct{}
+	closed  bool // closeAll ran (shutdown / restart): new connections end at once
 }
 
 func newHub() *hub {
@@ -64,6 +65,9 @@ func (h *hub) subscribe(pid string, agent bool) *sub {
 		}
 	}
 	m[s] = struct{}{}
+	if h.closed {
+		s.close()
+	}
 	return s
 }
 
@@ -113,9 +117,20 @@ func (h *hub) online(pid string) bool {
 	return len(h.subs[pid]) > 0
 }
 
+// closeAll drops every SSE connection and wakes every inbox long-poll so that
+// http.Server.Shutdown does not wait for them; later connections end at once.
 func (h *hub) closeAll() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.closed = true
+	for _, m := range h.waiters {
+		for c := range m {
+			select {
+			case c <- struct{}{}:
+			default:
+			}
+		}
+	}
 	for pid, m := range h.subs {
 		for s := range m {
 			s.close()
@@ -133,6 +148,9 @@ func (h *hub) wait(pid string) chan struct{} {
 		h.waiters[pid] = m
 	}
 	m[c] = struct{}{}
+	if h.closed {
+		c <- struct{}{}
+	}
 	h.mu.Unlock()
 	return c
 }

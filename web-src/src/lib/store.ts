@@ -35,6 +35,12 @@ export interface State {
   agents: Agent[] | null
   /** A message to scroll to once its chat is open (desktop notification click). */
   focus: { gid: string; seq: number } | null
+  /** Server version from GET /api/v1. */
+  serverVersion: string
+  /** Admins: a newer release can be installed (GET /admin/update, SSE 'update'). */
+  updateAvailable: boolean
+  /** The server announced a restart (SSE 'restarting'); the page reloads once it is back. */
+  restarting: boolean
 }
 
 const initial = (): State => ({
@@ -47,6 +53,9 @@ const initial = (): State => ({
   working: {},
   agents: null,
   focus: null,
+  serverVersion: '',
+  updateAvailable: false,
+  restarting: false,
 })
 
 let state: State = initial()
@@ -208,6 +217,26 @@ export function agentStateOf(m: { online?: boolean; state?: AgentState | null },
   if (m.state === 'attached') return 'attached'
   if (working || m.state === 'running') return 'running'
   return m.online || m.state ? 'idle' : 'offline'
+}
+
+// ---- version and online update ----
+
+export async function loadServerVersion(): Promise<string> {
+  const r = await api<{ version?: string }>('GET', '')
+  const v = r.version || ''
+  if (v !== state.serverVersion) setState({ serverVersion: v })
+  return v
+}
+
+/** Admins only: whether the update dot shows on the 管理 nav item. */
+export async function loadUpdateFlag() {
+  if (!state.me?.isAdmin) return
+  try {
+    const r = await api<{ available?: boolean }>('GET', '/admin/update')
+    setState({ updateAvailable: !!r.available })
+  } catch {
+    /* ignore */
+  }
 }
 
 // ---- data ----

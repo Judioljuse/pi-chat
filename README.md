@@ -125,6 +125,43 @@ prompt 里指挥者的消息带一个每次 run 随机生成的暗号标记，�
 - 每个 owner 每小时最多 30 次由 agent 消息触发的唤醒；非指挥者每人每小时最多唤醒同一个 agent 10 次。
 - listener 每天最多 200 次 run；默认（一个主会话）所有 run 串行，`sessionScope: "group"` 的旧模式下同群串行、全局最多 2 个并行。
 
+## 更新
+
+管理员在网页「管理 → 版本与更新」里能看到当前版本和 GitHub 上最新的发布。有新版本时，侧栏「管理」旁边会出现一个小圆点；点「更新到 vX」并输入自己的登录密码，服务器会下载新版本并重启，网页断开几秒后自动刷新。
+
+工作方式：
+
+- 服务器每 12 小时（以及点「检查更新」时）查询 `https://api.github.com/repos/Judioljuse/pi-chat/releases/latest`，找本机平台的程序 `pichat_<版本>_<系统>_<架构>`。
+- 更新时下载到 `<数据目录>/bin/`，用 GitHub API 给出的 sha256（或发布里的 `SHA256SUMS`，直接从 GitHub 下载）校验，再运行一次 `<新程序> version` 确认能在本机运行，然后写 `<数据目录>/bin/current.json` 并重启进新程序。只保留当前和上一个版本。
+- 每次启动时，原来的程序（内置版本）先看 `current.json`：已安装的版本更新、文件在 `<数据目录>/bin/` 里且 sha256 和安装时一致时就切换过去（文件被改动就不运行，退回内置版本）。新版本连续 3 次没能正常运行 60 秒（正常停止不算），就退回内置版本，并在管理页提示，可以在那里「清除这个版本」。
+- 重启进新版本前，数据库会先备份到 `<数据目录>/bin/pre-<版本>.db`（只留最近一份）。新版本改了数据库结构后再恢复内置版本，旧程序可能用不了新结构，这时停掉服务，把这份备份换回 `pichat.db`。
+- 自己升级了镜像或二进制、内置版本不低于已安装的版本时，`current.json` 会被忽略。
+- 「恢复内置版本」：删除 `current.json`，重启进镜像或安装时自带的程序。
+
+信任模型：服务器会下载并执行配置的 GitHub 仓库（默认 `Judioljuse/pi-chat`）发布的程序。只有管理员在网页会话里、输入密码后才能触发；完整性来自 GitHub API 返回的摘要或 `SHA256SUMS`（都走 TLS），下载镜像只提供文件内容，改不了校验值。不信任这个仓库的发布，就关掉在线更新。
+
+| 变量 | 默认 | 说明 |
+|-|-|-|
+| `PICHAT_UPDATE` | `on` | `off` 关闭在线更新（管理页只显示版本） |
+| `PICHAT_UPDATE_REPO` | `Judioljuse/pi-chat` | 从哪个仓库的发布更新 |
+| `PICHAT_UPDATE_MIRROR` | 空 | 下载地址前缀，github.com 下载慢时用，例如 `https://ghproxy.example.com/`（会拼成 `<前缀><原下载地址>`） |
+| `PICHAT_UPDATE_API` | `https://api.github.com` | GitHub API 地址（测试用） |
+
+Docker：新程序放在数据卷 `/data/bin/` 里，容器重建后仍然有效（启动时会切过去）。数据卷挂载成 `noexec` 时在线更新会失败，提示「数据目录不允许执行程序」，这时用下面的手动方式更新。
+
+第一次（还没有在线更新功能的版本）或者想手动更新：
+
+```sh
+# Docker
+git pull && docker compose up -d --build
+# 二进制 / systemd
+git pull && make build && sudo cp bin/pichat /usr/local/bin/pichat && sudo systemctl restart pichat
+```
+
+`pichat version` 打印版本号。发布流程：改 `internal/version/VERSION` 和 `CHANGELOG.md`，提交后打 `v<版本>` tag 推上去，GitHub Actions 会编译四个平台的程序并创建发布。
+
+listener 也会自动更新：服务器更新后（或嵌入的脚本变了），listener 在空闲时（没有 run、没有 attach）从服务器下载新脚本，校验 sha256 后替换自己并重启，最多每 10 分钟一次。`install` 写的 systemd / launchd 服务由服务管理器重启，前台运行时自己拉起新进程。放在 git 仓库里的脚本（开发用）不会被替换。关闭：`node ~/.pichat/pichat-listen.mjs config --name <名字> --auto-update off`。「我的 agent」页面显示每个 listener 是不是最新。
+
 ## 备份
 
 ```sh

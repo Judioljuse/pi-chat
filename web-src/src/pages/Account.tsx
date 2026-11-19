@@ -14,6 +14,7 @@ import type { Me } from '@/lib/types'
 
 export function Account() {
   const me = useStore((s) => s.me)
+  const serverVersion = useStore((s) => s.serverVersion)
   const [dn, setDn] = useState(me?.displayName ?? '')
   const [pw, setPw] = useState({ cur: '', a: '', b: '' })
   const [busy, setBusy] = useState(false)
@@ -104,6 +105,7 @@ export function Account() {
           退出登录
         </Button>
       </div>
+      {serverVersion && <p className="text-center text-[12px] text-muted-foreground">pichat v{serverVersion}</p>}
     </Page>
   )
 }

@@ -228,42 +228,50 @@ type RowActionState =
   | "failed"
   | "removing";
 
-function RowAction({
+function RemoveButton({
   label,
   onClick,
+  reduce,
+  t,
+}: {
+  label: string;
+  onClick: () => void;
+  reduce: boolean;
+  t: Translate;
+}) {
+  return (
+    <Tooltip content={t("removeAttachment")} side="top" delay={100}>
+      <motion.button
+        type="button"
+        aria-label={t("remove", { name: label })}
+        onClick={onClick}
+        whileTap={reduce ? undefined : { scale: 0.92 }}
+        transition={SPRING_PRESS}
+        className="grid size-9 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <X className="size-4" />
+      </motion.button>
+    </Tooltip>
+  );
+}
+
+// pichat: every state except "removing" keeps a remove button, so a stuck or
+// failed upload can always be dropped; failed rows also get retry.
+function RowAction({
+  label,
+  onRemove,
+  onRetry,
   state,
-  retryable = false,
   reduce = false,
   t,
 }: {
   label: string;
   t: Translate;
-  onClick: () => void;
+  onRemove: () => void;
+  onRetry?: () => void;
   state: RowActionState;
-  retryable?: boolean;
   reduce?: boolean;
 }) {
-  if (state === "uploading") {
-    return <span aria-hidden="true" className="size-9 shrink-0" />;
-  }
-
-  if (state === "complete") {
-    return (
-      <Tooltip content={t("uploadComplete")} side="top" delay={100}>
-        <motion.span
-          role="status"
-          aria-label={t("uploadCompleteFor", { name: label })}
-          initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.75 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={ITEM_TRANSITION}
-          className="grid size-9 shrink-0 place-items-center rounded-xl text-success"
-        >
-          <Check className="size-4" />
-        </motion.span>
-      </Tooltip>
-    );
-  }
-
   if (state === "removing") {
     return (
       <Tooltip content={t("removingAttachment")} side="top" delay={100}>
@@ -288,51 +296,63 @@ function RowAction({
     );
   }
 
-  if (state === "failed") {
-    if (!retryable) {
-      return (
-        <Tooltip content={t("uploadFailed")} side="top" delay={100}>
-          <span
-            role="status"
-            aria-label={t("uploadFailedFor", { name: label })}
-            className="grid size-9 shrink-0 place-items-center rounded-xl text-destructive"
-          >
-            <AlertCircle className="size-4" />
-          </span>
-        </Tooltip>
-      );
-    }
+  const remove = (
+    <RemoveButton label={label} onClick={onRemove} reduce={reduce} t={t} />
+  );
 
+  if (state === "complete") {
     return (
-      <Tooltip content={t("retryUpload")} side="top" delay={100}>
-        <motion.button
-          type="button"
-          aria-label={t("retry", { name: label })}
-          onClick={onClick}
-          whileTap={reduce ? undefined : { scale: 0.92 }}
-          transition={SPRING_PRESS}
-          className="grid size-9 shrink-0 place-items-center rounded-xl text-destructive outline-none transition-colors hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <RotateCcw className="size-4" />
-        </motion.button>
-      </Tooltip>
+      <>
+        <Tooltip content={t("uploadComplete")} side="top" delay={100}>
+          <motion.span
+            role="status"
+            aria-label={t("uploadCompleteFor", { name: label })}
+            initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.75 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={ITEM_TRANSITION}
+            className="grid size-9 shrink-0 place-items-center rounded-xl text-success"
+          >
+            <Check className="size-4" />
+          </motion.span>
+        </Tooltip>
+        {remove}
+      </>
     );
   }
 
-  return (
-    <Tooltip content={t("removeAttachment")} side="top" delay={100}>
-      <motion.button
-        type="button"
-        aria-label={t("remove", { name: label })}
-        onClick={onClick}
-        whileTap={reduce ? undefined : { scale: 0.92 }}
-        transition={SPRING_PRESS}
-        className="grid size-9 shrink-0 place-items-center rounded-xl text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <X className="size-4" />
-      </motion.button>
-    </Tooltip>
-  );
+  if (state === "failed") {
+    return (
+      <>
+        {onRetry ? (
+          <Tooltip content={t("retryUpload")} side="top" delay={100}>
+            <motion.button
+              type="button"
+              aria-label={t("retry", { name: label })}
+              onClick={onRetry}
+              whileTap={reduce ? undefined : { scale: 0.92 }}
+              transition={SPRING_PRESS}
+              className="grid size-9 shrink-0 place-items-center rounded-xl text-destructive outline-none transition-colors hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <RotateCcw className="size-4" />
+            </motion.button>
+          </Tooltip>
+        ) : (
+          <Tooltip content={t("uploadFailed")} side="top" delay={100}>
+            <span
+              role="status"
+              aria-label={t("uploadFailedFor", { name: label })}
+              className="grid size-9 shrink-0 place-items-center rounded-xl text-destructive"
+            >
+              <AlertCircle className="size-4" />
+            </span>
+          </Tooltip>
+        )}
+        {remove}
+      </>
+    );
+  }
+
+  return remove;
 }
 
 function ImageThumbnail({
@@ -747,15 +767,9 @@ function AttachmentRow({
 
       <RowAction
         label={item.name}
-        onClick={() => {
-          if (actionState === "failed") {
-            onRetry?.(item);
-            return;
-          }
-          onRemove(item);
-        }}
+        onRemove={() => onRemove(item)}
+        onRetry={onRetry ? () => onRetry(item) : undefined}
         state={actionState}
-        retryable={onRetry !== undefined}
         reduce={reduce}
         t={t}
       />

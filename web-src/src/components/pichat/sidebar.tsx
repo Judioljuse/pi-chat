@@ -58,6 +58,7 @@ export function Sidebar({ className }: { className?: string }) {
     g.peer ? g.peer.kind === 'agent' && busyAgents.has(g.peer.id) : Object.keys(working[g.id] ?? {}).length > 0
   const platformOf = (id: string) => agents?.find((a) => a.id === id)?.platform
   const onlineOf = (id: string) => agents?.find((a) => a.id === id)?.online
+  const updateAvailable = useStore((s) => s.updateAvailable)
   const search = useRef<HTMLInputElement>(null)
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 
@@ -112,6 +113,9 @@ export function Sidebar({ className }: { className?: string }) {
         {me?.isAdmin && (
           <NavItem href="#/admin" icon={<Shield />} active={route.name === 'admin'}>
             管理
+            {updateAvailable && (
+              <span className="ml-auto size-1.5 rounded-full bg-brand" title="有新版本" aria-label="有新版本" />
+            )}
           </NavItem>
         )}
       </div>

@@ -80,15 +80,50 @@ var runtimeStates = map[string]bool{"idle": true, "running": true, "attached": t
 type runtimeInfo struct {
 	State, Session, Host, Name, Notice string
 	At, NoticeAt                       int64
+	Listener                           *listenerReport
+}
+
+// listenerReport is the listener script version a listener reports (sha256 prefix, server version it came from).
+type listenerReport struct {
+	Sha256     string `json:"sha256"`
+	Version    string `json:"version"`
+	AutoUpdate bool   `json:"autoUpdate"`
+	Skip       string `json:"skip,omitempty"` // why the listener won't update itself: git (work tree) | readonly
+	latest     bool
+}
+
+// clean bounds the reported fields.
+func (l *listenerReport) clean() *listenerReport {
+	if l == nil {
+		return nil
+	}
+	sha := strings.ToLower(cleanLabel(l.Sha256, 64))
+	ver := cleanLabel(l.Version, 40)
+	if ver == "" {
+		ver = "unknown"
+	}
+	skip := l.Skip
+	if skip != "git" && skip != "readonly" {
+		skip = ""
+	}
+	return &listenerReport{Sha256: sha, Version: ver, AutoUpdate: l.AutoUpdate, Skip: skip}
 }
 
 func (s *Server) loadRuntime(id string) runtimeInfo {
-	var st, sess, host, name, notice sql.NullString
+	var st, sess, host, name, notice, lis sql.NullString
 	var at, noticeAt sql.NullInt64
-	s.db.R.QueryRow(`SELECT runtime_state,main_session,runtime_host,runtime_name,runtime_at,runtime_notice,runtime_notice_at FROM principals WHERE id=?`, id).
-		Scan(&st, &sess, &host, &name, &at, &notice, &noticeAt)
-	return runtimeInfo{State: s.effectiveState(id, st.String), Session: sess.String, Host: host.String, Name: name.String, At: at.Int64,
+	s.db.R.QueryRow(`SELECT runtime_state,main_session,runtime_host,runtime_name,runtime_at,runtime_notice,runtime_notice_at,runtime_listener FROM principals WHERE id=?`, id).
+		Scan(&st, &sess, &host, &name, &at, &notice, &noticeAt, &lis)
+	rt := runtimeInfo{State: s.effectiveState(id, st.String), Session: sess.String, Host: host.String, Name: name.String, At: at.Int64,
 		Notice: notice.String, NoticeAt: noticeAt.Int64}
+	if lis.Valid {
+		var l listenerReport
+		if json.Unmarshal([]byte(lis.String), &l) == nil {
+			l.latest = len(l.Sha256) >= 12 && strings.HasPrefix(s.listenerSHA(), l.Sha256)
+			rt.Listener = &l
+		}
+	}
+	return rt
 }
 
 // effectiveState maps the stored listener state to what clients see: offline without an SSE connection.
@@ -127,7 +162,15 @@ func (r runtimeInfo) noticeAt() any {
 
 func (r runtimeInfo) json() obj {
 	return obj{"state": r.State, "session": nullable(r.Session), "host": nullable(r.Host), "name": nullable(r.Name), "at": r.At,
-		"notice": nullable(r.Notice), "noticeAt": r.noticeAt()}
+		"notice": nullable(r.Notice), "noticeAt": r.noticeAt(), "listener": r.listenerJSON()}
+}
+
+// listenerJSON adds latest: whether the reported script matches the one this server serves (nil if never reported).
+func (r runtimeInfo) listenerJSON() any {
+	if r.Listener == nil {
+		return nil
+	}
+	return obj{"sha256": r.Listener.Sha256, "version": r.Listener.Version, "autoUpdate": r.Listener.AutoUpdate, "skip": nullable(r.Listener.Skip), "latest": r.Listener.latest}
 }
 
 // broadcastAgent pushes the agent's runtime to its owner and the human members of its groups.
@@ -180,7 +223,8 @@ func (s *Server) agentSessions(id string) ([]obj, error) {
 func (s *Server) putRuntime(c *ctx) (any, error) {
 	var req struct {
 		State, Session, Host, Name string
-		Notice                     *string // omitted: keep the current notice; "" clears it
+		Notice                     *string         // omitted: keep the current notice; "" clears it
+		Listener                   *listenerReport // omitted: keep the stored one
 	}
 	if err := c.decode(&req); err != nil {
 		return nil, err
@@ -203,6 +247,12 @@ func (s *Server) putRuntime(c *ctx) (any, error) {
 		if _, err := tx.Exec(`UPDATE principals SET runtime_state=?, main_session=COALESCE(?,main_session), runtime_host=COALESCE(?,runtime_host),
 			runtime_name=COALESCE(?,runtime_name), runtime_at=? WHERE id=?`, req.State, nullStr(sess), nullStr(host), nullStr(name), t, c.a.ID); err != nil {
 			return err
+		}
+		if l := req.Listener.clean(); l != nil {
+			b, _ := json.Marshal(l)
+			if _, err := tx.Exec(`UPDATE principals SET runtime_listener=? WHERE id=?`, string(b), c.a.ID); err != nil {
+				return err
+			}
 		}
 		if req.Notice == nil {
 			return nil
