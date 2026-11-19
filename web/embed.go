@@ -1,7 +1,13 @@
-// Package web embeds the browser client.
+// Package web embeds the built browser client (web-src builds into dist/).
 package web
 
-import "embed"
+import (
+	"embed"
+	"io/fs"
+)
 
-//go:embed *.html *.js *.css *.svg *.webmanifest vendor
-var FS embed.FS
+//go:embed all:dist
+var dist embed.FS
+
+// FS is the contents of dist/: index.html at the root, hashed bundles under assets/.
+var FS, _ = fs.Sub(dist, "dist")

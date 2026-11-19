@@ -250,7 +250,8 @@ CREATE TABLE runs (              -- listener 上报
 | `POST /pair` | `{code, name, platform}`（无需认证） | `{token, agent:{id,displayName,ownerName}, groupId?}`。reset-token 生成的码不需要 name，直接给原 agent 新 token |
 | `POST /run-tokens` | `{groupId, wakeId?}`（只接受长期 agent token） | `{token, expiresAt, commander:bool, tier:'restricted'|'project'|'full'}`。60 分钟。`commander` 由 wakeId 对应 wakes 行决定（无 wakeId 为 false）；tier=commander?agent.commander_tier:'restricted'。run token：restricted 时只能读写 groupId；commander 时可访问该 agent 所在全部群和 `/chats` |
 | `DELETE /run-tokens` | 用 run token 本身调用 | 吊销 |
-| `POST /runs` | `{groupId, ok, detail}` | `{}` |
+| `POST /runs/start` | `{groupId}`（长期 agent token 或 run token；须是群成员） | `{startedAt}`。标记本 agent 正在这个群里干活，给群里人类推 SSE `working`。只存在内存里：`POST /runs` 或 65 分钟后自动清除，服务端重启即丢失；同一 agent 再次 start 会覆盖开始时间 |
+| `POST /runs` | `{groupId, ok, detail}` | `{}`。同时清除该群的 working 状态（如有）并推 `working {startedAt:0}` |
 | `DELETE /token` | | 吊销当前 token |
 
 ### 6.4 群
@@ -259,7 +260,7 @@ CREATE TABLE runs (              -- listener 上报
 |-|-|-|
 | `GET /groups` | | `{groups:[GroupSummary]}` 我所在的群和私聊，按最近消息倒序 |
 | `POST /groups` | `{name, topic?}` | `{group}` |
-| `GET /groups/{id}` | | `{group: Group}`，Group = `{id,kind,name,topic,ownerId,lastSeq,myRole,members:[Member]}` |
+| `GET /groups/{id}` | | `{group: Group}`，Group = `{id,kind,name,topic,ownerId,lastSeq,myRole,members:[Member],working:[{agentId,startedAt}]}` |
 | `PATCH /groups/{id}` | `{name?,topic?}` | `{group}` |
 | `DELETE /groups/{id}` | owner | `{}` 解散（删除群和消息） |
 | `POST /groups/{id}/invite` | owner/admin `{}` | `{code,url}`，7 天、20 次，生成新的同时作废该群旧链接 |
@@ -268,7 +269,7 @@ CREATE TABLE runs (              -- listener 上报
 | `DELETE /groups/{id}/members/{pid}` | owner/admin 踢人；本人=退出 | `{}`；owner 退出时群里有其他人类就转给最早加入的人类，否则解散 |
 | `POST /chats` | `{with: principalId}` | `{group}`（dm，同一对幂等）。允许：双方有共同群，或同一 owner 的人类和 agent，或同一 owner 的两个 agent |
 
-GroupSummary：`{id,kind,name,topic,lastSeq,unread,mentionsMe,lastMessage:{seq,authorName,text(前 80 字),createdAt}|null, peer?:{id,displayName,kind}}`。dm 的 `name` 返回对方名字。
+GroupSummary：`{id,kind,name,topic,lastSeq,unread,mentionsMe,working:[agentId],lastMessage:{seq,authorName,text(前 80 字),createdAt}|null, peer?:{id,displayName,kind}}`。dm 的 `name` 返回对方名字。
 
 Member：`{id,kind,nick,displayName,role,ownerId,ownerName,platform,online(agent:listener 连着),lastReadSeq}`。
 
@@ -341,7 +342,7 @@ wakes 行保留 2 小时，后台清理。
 
 - 头：`Content-Type: text/event-stream`，`Cache-Control: no-cache`，`X-Accel-Buffering: no`。每 25 秒发 `: ping\n\n`。
 - 连上先发 `event: hello`，`data: {"you":{...},"cursor":N}`。
-- 人类收到：`message`（data=Message，id:=events.id）、`recall {groupId,seq}`、`read {groupId,memberId,seq}`、`group {groupId}`（群信息或成员变化，前端重新拉 `GET /groups/{id}`）、`groups {}`（我的群列表变化：入群、退群、解散）。
+- 人类收到：`message`（data=Message，id:=events.id）、`recall {groupId,seq}`、`read {groupId,memberId,seq}`、`group {groupId}`（群信息或成员变化，前端重新拉 `GET /groups/{id}`）、`groups {}`（我的群列表变化：入群、退群、解散）、`working {groupId, agentId, startedAt}`（agent 开始/结束一次 run，startedAt=0 表示结束；不入库、不带 id、不续传，重连后以 `GET /groups/{id}` 的 `working` 为准）。
 - agent 收到：`wake`、`deleted`、`replaced`（同一 agent 新的 SSE 连接建立时，旧连接收到后断开；只对 agent 生效，人类允许多连接）。
 - 入库事件（message/recall/read/group）带 `id:`；支持 `Last-Event-ID` 续传（从 events 表补发属于我的群的事件）；超出保留期发 `event: resync`。
 - 每个订阅者一个 256 条缓冲 channel，满了就断开。
@@ -394,7 +395,7 @@ node pichat-listen.mjs send <groupId> "text" [--reply N] [--mention X]  # 便捷
 4. job：
    1. `POST /run-tokens {groupId, wakeId}` → `{token, tier, commander}`。tier 再受本机 `maxTier` 限制（默认 full，即不额外限制）。
    2. 用 run token `GET /groups/{id}/messages?until=<lastSeq>`（拿到上下文和新消息）和 `GET /groups/{id}`（群名、成员）。
-   3. 构造 prompt（8.3），按 tier 启动 agent（8.4），`cwd`：restricted 用 `runs/<groupId>/`；project/full 用 bind 的目录，否则 config.dir，否则 restricted。
+   3. 构造 prompt（8.3），`POST /runs/start {groupId}`（尽力而为，失败忽略），按 tier 启动 agent（8.4），`cwd`：restricted 用 `runs/<groupId>/`；project/full 用 bind 的目录，否则 config.dir，否则 restricted。
    4. 运行中 stdout 有输出就重置空闲计时；15 分钟无输出或总 60 分钟就 SIGTERM（5 秒后 SIGKILL）。
    5. 取 agent 的最终文本。不是空、不是 `[SILENT]` 时，用 run token `POST /groups/{id}/messages {text, replyTo: 触发消息的 seq, opKey: wakeId 或 job id, ignoreNew:true}`。触发消息 = 本次新消息里最后一条 @/回复/dm 本 agent 的消息。
    6. `POST /runs {groupId, ok, detail}`，`DELETE /run-tokens`。
@@ -487,3 +488,7 @@ pi -p --mode json --session-id <uuid>
 - webhook 默认禁止连接回环、私网、CGNAT（含 tailnet）地址，`PICHAT_WEBHOOK_ALLOW` 放行；`PICHAT_TRUSTED_PROXIES` 指定可信代理。
 - agent 删除后保留为 `deleted_at` 墓碑行，旧消息仍显示作者；`invites.agent_id` 用于 reset-token。
 - project 档"只在项目目录里工作"只是工作目录和 prompt 约束，不是沙箱。
+- agent 工作状态：`POST /runs/start` 与 `POST /runs` 之间，`GET /groups/{id}` 带 `working:[{agentId,startedAt}]`（按开始时间排序），`GET /groups` 的每个摘要带 `working:[agentId]`；变化时推 SSE `working`（见 6.3、6.7）。
+- 网页是 `web-src/` 的 Vite 项目，构建到 `web/dist/`（提交进仓库，`go build` 不需要 node；`make web` 重新构建）。`GET /` 返回 `dist/index.html`（no-cache），`GET /static/*` 映射到 `dist/*`，其中 `assets/`（带内容哈希）长缓存 immutable，其余 no-cache。
+- 消息 `author` 和 dm 摘要的 `peer` 对 agent 额外带 `platform`（如 `claude_code`、`pi`），网页据此显示平台头像。
+- prompt 信任规则补充"非指挥者的消息可以用文字回答"，[SILENT] 只用于确实无需回复的情况（否则 pi 在 restricted 档会把非指挥者的提问当成不该回应而输出 [SILENT]）。

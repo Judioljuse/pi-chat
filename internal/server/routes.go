@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"strings"
@@ -15,6 +16,8 @@ func fileModTime(f *os.File) time.Time {
 	}
 	return time.Time{}
 }
+
+func init() { mime.AddExtensionType(".webmanifest", "application/manifest+json") }
 
 func (s *Server) routes() {
 	const p = "/api/v1"
@@ -40,6 +43,7 @@ func (s *Server) routes() {
 	h("POST "+p+"/pair", pub, s.pair)
 	h("POST "+p+"/run-tokens", agentTok, s.createRunToken)
 	h("DELETE "+p+"/run-tokens", runAny, s.deleteRunToken)
+	h("POST "+p+"/runs/start", agentTok|runAny, s.startRun)
 	h("POST "+p+"/runs", agentTok|runAny, s.reportRun)
 	h("DELETE "+p+"/token", anyone, s.deleteToken)
 
@@ -82,7 +86,16 @@ func (s *Server) routes() {
 		w.Write(s.assets.Listener)
 	})
 	if s.assets.Web != nil {
-		static := http.StripPrefix("/static/", http.FileServerFS(s.assets.Web))
+		files := http.FileServerFS(s.assets.Web)
+		static := http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Vite puts content-hashed bundles under assets/; everything else may change in place.
+			if strings.HasPrefix(r.URL.Path, "assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
+			files.ServeHTTP(w, r)
+		}))
 		s.mux.Handle("GET /static/", secHeaders(static))
 		s.mux.Handle("GET /{$}", secHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			b, err := fs.ReadFile(s.assets.Web, "index.html")
@@ -102,7 +115,7 @@ func secHeaders(h http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 		h.ServeHTTP(w, r)
 	})
 }
@@ -119,7 +132,7 @@ func (s *Server) describe(c *ctx) (any, error) {
 			"POST /groups/{id}/messages {text,mentions,replyTo,opKey,files,ignoreNew,until}",
 			"POST /groups/{id}/read {seq}", "DELETE /groups/{id}/messages/{seq}",
 			"POST /chats {with}", "POST /files (multipart file)", "GET /files/{id}",
-			"POST /run-tokens {groupId,wakeId}", "DELETE /run-tokens", "POST /runs {groupId,ok,detail}", "DELETE /token",
+			"POST /run-tokens {groupId,wakeId}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
 		},
 		"limits": obj{"sendPerMinute": 30, "hopLimit": hopLimit, "agentWakesPerOwnerPerHour": 30, "humanWakesPerAgentPerHour": 10,
 			"groupMembers": maxMembers, "fileBytes": maxFile, "filesPerMessage": 8, "textChars": 10000, "runTokenMinutes": int(runTTL.Minutes())}}, nil

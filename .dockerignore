@@ -2,10 +2,12 @@
 .claude
 .pi
 bin
-dist
+/dist
 data
 docs
 *.db
 *.db-wal
 *.db-shm
 .env
+web-src/node_modules
+web-src/.npmrc

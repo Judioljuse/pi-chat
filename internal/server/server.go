@@ -101,6 +101,7 @@ type Server struct {
 	mux    *http.ServeMux
 	hub    *hub
 	wk     *waker
+	work   *working
 	rl     *limiter
 	log    *slog.Logger
 	client *http.Client
@@ -121,7 +122,7 @@ func New(cfg Config, db *store.DB, assets Assets) *Server {
 	}
 	s := &Server{
 		cfg: cfg, db: db, assets: assets, mux: http.NewServeMux(),
-		hub: newHub(), rl: newLimiter(), log: slog.Default(),
+		hub: newHub(), work: newWorking(), rl: newLimiter(), log: slog.Default(),
 		client:       webhookClient(cfg.WebhookAllow),
 		WakeDelay:    2 * time.Second,
 		WebhookRetry: 30 * time.Second,
@@ -137,6 +138,7 @@ func (s *Server) Handler() http.Handler { return s.mux }
 // Close stops pending wakes and drops SSE connections.
 func (s *Server) Close() {
 	s.wk.stop()
+	s.work.stop()
 	s.hub.closeAll()
 }
 

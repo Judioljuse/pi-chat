@@ -1,0 +1,273 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Dark mode follows the OS; there is no manual toggle. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "Noto Serif SC", serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-body: var(--body);
+  --color-brand: var(--brand);
+  --color-brand-light: var(--brand-light);
+  --color-tag: var(--tag);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-online: var(--online);
+  --color-agent: var(--agent);
+  --color-agent-light: var(--agent-light);
+  --color-mention-me: var(--mention-me);
+  --color-mention-me-light: var(--mention-me-light);
+  --color-claude: var(--claude);
+  --color-bubble-me: var(--bubble-me);
+  --color-bubble-me-foreground: var(--bubble-me-foreground);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-card: 10px;
+  --radius-control: 8px;
+  --radius-chip: 6px;
+
+  --shadow-hairline: 0 0 0 1px var(--border);
+  --shadow-card: 0 0 0 1px var(--border), 0 1px 2px rgb(37 37 34 / 0.04);
+  --shadow-raised: 0 0 0 1px var(--border), 0 4px 14px -4px rgb(37 37 34 / 0.10);
+  --shadow-overlay: 0 0 0 1px var(--border), 0 12px 32px -8px rgb(37 37 34 / 0.18);
+  --shadow-btn: 0 0 0 1px var(--input), 0 1px 1px rgb(37 37 34 / 0.05);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-pixel-on: pixel-on 650ms ease-in-out infinite;
+  --animate-shimmer-text: shimmer-text 1.4s linear infinite;
+  --animate-pop-in: pop-in 0.25s var(--ease-out) both;
+  --animate-fade-in: fade-in 0.2s var(--ease-out) both;
+  --animate-fade-up: fade-up 0.4s var(--ease-out) both;
+  --animate-panel-in: panel-in 0.4s var(--ease-out) both;
+  --animate-enter: enter 0.3s var(--ease-out) both;
+}
+
+/* Nuphos light palette (nuphos.com :root). */
+:root {
+  --radius: 0.625rem;
+
+  --background: rgb(245 244 242);
+  --foreground: rgb(37 37 34);
+  --body: rgb(95 98 99);
+  --card: rgb(250 249 247);
+  --card-foreground: rgb(37 37 34);
+  --popover: rgb(250 249 247);
+  --popover-foreground: rgb(37 37 34);
+  --primary: rgb(37 37 34);
+  --primary-foreground: rgb(250 249 246);
+  --secondary: rgb(236 235 232);
+  --secondary-foreground: rgb(37 37 34);
+  --muted: rgb(240 239 236);
+  --muted-foreground: rgb(120 123 124);
+  --accent: rgb(238 237 234);
+  --accent-foreground: rgb(37 37 34);
+  --destructive: rgb(190 64 52);
+  --border: rgb(219 220 217);
+  --input: rgb(216 218 217);
+  --ring: rgb(78 106 126);
+
+  --brand: rgb(78 106 126);
+  --brand-light: rgb(232 239 243);
+  --tag: rgb(230 237 241);
+  --success: rgb(46 140 87);
+  --warning: rgb(176 112 20);
+  --online: rgb(52 168 98);
+  --agent: rgb(109 84 170);
+  --agent-light: rgb(239 235 248);
+  --mention-me: rgb(150 92 8);
+  --mention-me-light: rgb(250 236 204);
+  --claude: rgb(217 119 87);
+  --bubble-me: rgb(37 37 34);
+  --bubble-me-foreground: rgb(250 249 246);
+
+  --sidebar: rgb(245 244 242);
+  --sidebar-foreground: rgb(37 37 34);
+  --sidebar-primary: rgb(37 37 34);
+  --sidebar-primary-foreground: rgb(250 249 246);
+  --sidebar-accent: rgb(234 233 229);
+  --sidebar-accent-foreground: rgb(37 37 34);
+  --sidebar-border: rgb(219 220 217);
+  --sidebar-ring: rgb(78 106 126);
+}
+
+/* Warm dark palette derived from the same hues. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #1b1b19;
+    --foreground: #ecebe7;
+    --body: #bdbcb6;
+    --card: #232320;
+    --card-foreground: #ecebe7;
+    --popover: #262623;
+    --popover-foreground: #ecebe7;
+    --primary: #ecebe7;
+    --primary-foreground: #1b1b19;
+    --secondary: #2d2d29;
+    --secondary-foreground: #ecebe7;
+    --muted: #2a2a27;
+    --muted-foreground: #9a9993;
+    --accent: #2e2e2a;
+    --accent-foreground: #ecebe7;
+    --destructive: #e07a6c;
+    --border: #363632;
+    --input: #3d3d38;
+    --ring: #8eaabd;
+
+    --brand: #9cb6c8;
+    --brand-light: #26313a;
+    --tag: #283039;
+    --success: #6cc493;
+    --warning: #e0b060;
+    --online: #5bc488;
+    --agent: #b7a2e8;
+    --agent-light: #2e2840;
+    --mention-me: #fbbf24;
+    --mention-me-light: rgb(245 158 11 / 0.2);
+    --claude: #e08a6c;
+    --bubble-me: #ecebe7;
+    --bubble-me-foreground: #1b1b19;
+
+    --sidebar: #1b1b19;
+    --sidebar-foreground: #ecebe7;
+    --sidebar-primary: #ecebe7;
+    --sidebar-primary-foreground: #1b1b19;
+    --sidebar-accent: #2a2a27;
+    --sidebar-accent-foreground: #ecebe7;
+    --sidebar-border: #363632;
+    --sidebar-ring: #8eaabd;
+  }
+}
+
+@keyframes pixel-on {
+  0%, 100% { opacity: 0.15; }
+  18%, 42% { opacity: 1; }
+  62% { opacity: 0.15; }
+}
+@keyframes shimmer-text {
+  0% { background-position: 150% center; }
+  100% { background-position: -50% center; }
+}
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(0.97); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes fade-up {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes panel-in {
+  0% { opacity: 0; transform: translateY(10px); filter: blur(4px); }
+  100% { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+@keyframes enter {
+  0% { opacity: 0; transform: translateY(8px); filter: blur(1px); }
+  100% { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background text-foreground text-sm antialiased;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Chat column: centered on the whole chat pane. --panel is the open member panel's width; with it open the
+   column first gives up outer space, then shifts. Works the same inside the list's symmetric scrollbar gutter. */
+.chat-column {
+  width: min(760px, 100%);
+  margin-left: max(0px, min((100% + var(--panel, 0px) - 760px) / 2, 100% - 760px));
+  margin-right: auto;
+  transition: margin-left 0.4s var(--ease-out);
+}
+
+/* Rendered markdown (src/lib/markdown.tsx). */
+.md {
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: 0.5em 0; }
+.md ul { list-style: disc; padding-left: 1.4em; }
+.md ol { list-style: decimal; padding-left: 1.4em; }
+.md li + li { margin-top: 0.15em; }
+.md h1, .md h2, .md h3, .md h4 { font-weight: 600; margin: 0.8em 0 0.4em; line-height: 1.35; }
+.md h1 { font-size: 1.25em; }
+.md h2 { font-size: 1.15em; }
+.md h3, .md h4 { font-size: 1em; }
+.md a { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+.md blockquote { border-left: 3px solid var(--border); padding-left: 0.8em; color: var(--muted-foreground); }
+.md code { font-family: var(--font-mono); font-size: 0.88em; background: var(--muted); border-radius: 4px; padding: 0.1em 0.35em; }
+.md pre { background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 0.75em 0.9em; overflow-x: auto; }
+.md pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.6; }
+.md table { border-collapse: collapse; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--border); padding: 0.3em 0.6em; text-align: left; }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 0.8em 0; }
+.md img { max-width: min(100%, 360px); max-height: 320px; border-radius: var(--radius-card); }
+.md-on-dark code, .md-on-dark pre { background: color-mix(in srgb, var(--bubble-me-foreground) 12%, transparent); border-color: transparent; }
+.md-on-dark a { color: inherit; }

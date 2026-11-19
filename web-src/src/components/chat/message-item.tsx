@@ -1,0 +1,363 @@
+import { memo, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
+import { useReducedMotion } from 'motion/react'
+import { AlertCircle, Copy, CornerUpLeft, CheckCheck, FileText, MessageSquareX, RotateCcw, Trash2 } from 'lucide-react'
+import {
+  Message,
+  MessageAvatar,
+  MessageBubble,
+  MessageBubbleContent,
+  MessageContent,
+  MessageFooter,
+  MessageHeader,
+} from '@/components/agents/message'
+import { AgentTag, PrincipalAvatar } from '@/components/pichat/avatar'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { fileUrl } from '@/lib/api'
+import { EASE_OUT } from '@/lib/ease'
+import { copy, fmtSize, fmtTime } from '@/lib/format'
+import { MarkdownText, type MentionTarget } from '@/lib/markdown'
+import type { FileRef, Member, Message as Msg } from '@/lib/types'
+import { cn } from '@/lib/utils'
+import { INLINE_IMG, isCoarse, RECALL_MS, snippet, type Pending } from './util'
+
+const LONG_PRESS_MS = 450
+
+export interface MessageItemProps {
+  m: Msg
+  grouped: boolean
+  meId: string
+  members: Member[]
+  mentions: MentionTarget[]
+  quoted?: Msg | null
+  animate: boolean
+  pending?: Pending
+  /** Last message of a run from one author: carries the read receipt. */
+  lastInRun?: boolean
+  /** Touch devices: a long press opens the action sheet. */
+  onLongPress?: (m: Msg, canRecall: boolean) => void
+  onReply: (m: Msg) => void
+  onJump: (seq: number) => void
+  onRecall: (m: Msg) => void
+  onRetry: (opKey: string) => void
+  onDiscard: (opKey: string) => void
+}
+
+const ENTER = {
+  initial: { opacity: 0, y: 8, filter: 'blur(1px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+  transition: { duration: 0.3, ease: EASE_OUT },
+}
+
+export function useRecallable(m: Msg, mine: boolean) {
+  const left = RECALL_MS - (Date.now() - m.createdAt)
+  const can = mine && m.seq > 0 && !m.recalled && left > 0
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!can) return
+    const t = setTimeout(() => tick((n) => n + 1), left + 50)
+    return () => clearTimeout(t)
+  }, [can, left])
+  return can
+}
+
+function Action({ label, onClick, children, danger }: { label: string; onClick: () => void; children: ReactNode; danger?: boolean }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          onClick={onClick}
+          className={cn('text-muted-foreground hover:bg-accent', danger && 'hover:bg-destructive/10 hover:text-destructive')}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function Files({ files, align }: { files: FileRef[]; align: 'start' | 'end' }) {
+  const images = files.filter((f) => INLINE_IMG.test(f.mime))
+  const others = files.filter((f) => !INLINE_IMG.test(f.mime))
+  return (
+    <div className={cn('flex max-w-full flex-col gap-1.5', align === 'end' ? 'items-end' : 'items-start')}>
+      {images.length > 0 && (
+        <div className={cn('flex flex-wrap gap-1.5', align === 'end' && 'justify-end')}>
+          {images.map((f) => (
+            <a key={f.id} href={fileUrl(f.id)} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-card shadow-hairline">
+              <img src={fileUrl(f.id)} alt={f.name} loading="lazy" className="max-h-60 max-w-[min(100%,320px)] object-cover" />
+            </a>
+          ))}
+        </div>
+      )}
+      {others.map((f) => (
+        <a
+          key={f.id}
+          href={fileUrl(f.id)}
+          download={f.name}
+          className="flex max-w-full items-center gap-2 rounded-card border border-border bg-card px-3 py-2 transition-colors hover:bg-accent"
+        >
+          <span className="grid size-8 shrink-0 place-items-center rounded-control bg-tag text-brand">
+            <FileText className="size-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-medium text-foreground">{f.name}</span>
+            <span className="block text-[11.5px] text-muted-foreground">{fmtSize(f.size)}</span>
+          </span>
+        </a>
+      ))}
+    </div>
+  )
+}
+
+function Quote({ seq, quoted, onJump, fill }: { seq: number; quoted?: Msg | null; onJump: (seq: number) => void; fill: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onJump(seq)}
+      className={cn(
+        'relative flex min-w-0 items-center gap-1.5 rounded-control bg-accent/70 py-1 pr-2 pl-3 text-left text-[12px] text-muted-foreground transition-colors hover:bg-accent',
+        'before:absolute before:inset-y-1.5 before:left-1 before:w-0.5 before:rounded-full before:bg-brand/45',
+        // Humans: as wide as the bubble below (the grid column), never wider. Agents: up to 80% of the column.
+        fill ? 'w-0 min-w-full' : 'w-fit max-w-[80%]',
+      )}
+    >
+      <span className="shrink-0 font-medium text-body">{quoted?.author?.name ?? `#${seq}`}</span>
+      <span className="min-w-0 truncate">{quoted ? snippet(quoted) : '…'}</span>
+    </button>
+  )
+}
+
+function Readers({ readers, className }: { readers: Member[]; className?: string }) {
+  if (!readers.length) return null
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn('inline-flex cursor-default items-center gap-0.5 text-[11px] text-muted-foreground', className)}>
+          <CheckCheck className="size-3" />
+          {readers.length} 人已读
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-64">
+        已读：{readers.map((x) => x.nick || x.displayName).join('、')}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+export const MessageItem = memo(function MessageItem({
+  m,
+  grouped,
+  meId,
+  members,
+  mentions,
+  quoted,
+  animate,
+  pending,
+  lastInRun,
+  onLongPress,
+  onReply,
+  onJump,
+  onRecall,
+  onRetry,
+  onDiscard,
+}: MessageItemProps) {
+  const a = m.author
+  const mine = a?.id === meId
+  const isAgent = a?.kind === 'agent'
+  const canRecall = useRecallable(m, mine)
+  const reduce = useReducedMotion()
+  // Decided once: a confirmed optimistic row keeps its key, and dropping the props mid-animation freezes it.
+  const [entering] = useState(animate)
+  const motionProps = entering && !reduce ? ENTER : {}
+  const press = useLongPress(() => onLongPress?.(m, canRecall))
+
+  if (m.recalled) {
+    return (
+      <div data-seq={m.seq} className="py-1 text-center text-[12px] text-muted-foreground">
+        {mine ? '你' : a?.name || '有人'}撤回了一条消息
+      </div>
+    )
+  }
+
+  const readers =
+    lastInRun && m.seq > 0 ? members.filter((x) => x.id !== a?.id && x.id !== meId && (x.lastReadSeq || 0) >= m.seq) : []
+  const author = members.find((x) => x.id === a?.id)
+  const avatar = a ? (
+    <PrincipalAvatar id={a.id} name={a.name} kind={a.kind} platform={a.platform ?? author?.platform} size="md" />
+  ) : null
+
+  // Desktop hover row. Touch devices use the long-press sheet instead and never show it.
+  const actions = !pending && (
+    <span
+      className={cn(
+        'flex items-center gap-1 transition-opacity duration-150 pointer-coarse:hidden',
+        'opacity-0 group-hover/message:opacity-100 group-focus-within/message:opacity-100',
+        !isAgent && 'absolute bottom-0',
+        !isAgent && (mine ? 'right-full mr-1' : 'left-full ml-1'),
+      )}
+    >
+      {m.text && (
+        <Action label="复制" onClick={() => copy(m.text)}>
+          <Copy />
+        </Action>
+      )}
+      <Action label="回复" onClick={() => onReply(m)}>
+        <CornerUpLeft />
+      </Action>
+      {canRecall && (
+        <Action label="撤回（2 分钟内）" danger onClick={() => onRecall(m)}>
+          <MessageSquareX />
+        </Action>
+      )}
+    </span>
+  )
+
+  const text = m.text ? (
+    <MarkdownText text={m.text} mentions={mentions} className={cn('text-[14px]', mine && 'md-on-dark')} />
+  ) : null
+  const quote = m.replyTo ? <Quote seq={m.replyTo} quoted={quoted} onJump={onJump} fill={!isAgent} /> : null
+  const files = m.files?.length ? <Files files={m.files} align={mine ? 'end' : 'start'} /> : null
+
+  return (
+    <Message
+      from={mine ? 'user' : 'assistant'}
+      data-seq={m.seq > 0 ? m.seq : undefined}
+      aria-label={`${a?.name ?? ''} ${fmtTime(m.createdAt)}`}
+      {...motionProps}
+      {...press}
+      className={cn(
+        'relative pointer-coarse:[-webkit-touch-callout:none]',
+        grouped ? 'mt-1' : 'mt-4',
+        pending?.status === 'sending' && 'opacity-60',
+      )}
+    >
+      {grouped ? (
+        <span
+          aria-hidden="true"
+          className="w-8 shrink-0 pt-1 text-center text-[10.5px] text-muted-foreground tabular-nums opacity-0 transition-opacity group-hover/message:opacity-100"
+        >
+          {fmtTime(m.createdAt)}
+        </span>
+      ) : (
+        <MessageAvatar className="mt-0.5 size-8 overflow-visible rounded-none bg-transparent">{avatar}</MessageAvatar>
+      )}
+      <MessageContent className="gap-1">
+        {!grouped && (
+          <MessageHeader className="gap-1.5 text-[12px]">
+            {mine ? (
+              <>
+                <span className="text-muted-foreground tabular-nums">{fmtTime(m.createdAt)}</span>
+                <span className="text-[13px] font-medium text-foreground">{a?.name || '我'}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-[13px] font-medium text-foreground">{a?.name || '?'}</span>
+                {isAgent && <AgentTag />}
+                {isAgent && (a?.ownerName || author?.ownerName) && (
+                  <span className="text-muted-foreground">owner：{a?.ownerName || author?.ownerName}</span>
+                )}
+                <span className="text-muted-foreground tabular-nums">{fmtTime(m.createdAt)}</span>
+              </>
+            )}
+          </MessageHeader>
+        )}
+        {isAgent ? (
+          <div className="flex w-full min-w-0 flex-col items-start gap-1">
+            {quote}
+            {text && (
+              <MessageBubble variant="ghost">
+                <MessageBubbleContent className="max-w-full text-foreground">{text}</MessageBubbleContent>
+              </MessageBubble>
+            )}
+            {files}
+            {(actions || readers.length > 0) && (
+              <div className="-mt-0.5 -mb-3 -ml-1.5 flex h-7 items-center gap-2 pointer-coarse:my-0 pointer-coarse:h-auto">
+                {readers.length > 0 && <Readers readers={readers} className="pl-1.5" />}
+                {actions}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className={cn('relative grid max-w-[82%] min-w-0 gap-1', mine ? 'justify-items-end' : 'justify-items-start', quote && 'min-w-48')}>
+            {quote}
+            {text && (
+              <MessageBubble variant={mine ? 'solid' : 'outline'}>
+                <MessageBubbleContent className="max-w-full rounded-[12px] px-3.5 py-2 leading-normal">{text}</MessageBubbleContent>
+              </MessageBubble>
+            )}
+            {files}
+            {actions}
+          </div>
+        )}
+        {!isAgent && <Footer pending={pending} readers={readers} onRetry={onRetry} onDiscard={onDiscard} />}
+        {isAgent && pending && <Footer pending={pending} readers={[]} onRetry={onRetry} onDiscard={onDiscard} />}
+      </MessageContent>
+    </Message>
+  )
+})
+
+/** Touch long press: fires after LONG_PRESS_MS unless the finger moves or lifts. */
+function useLongPress(fire: () => void) {
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const origin = useRef({ x: 0, y: 0 })
+  const cancel = () => clearTimeout(timer.current)
+  useEffect(() => cancel, [])
+  return {
+    onPointerDown: (e: PointerEvent<HTMLElement>) => {
+      if (e.pointerType !== 'touch' || (e.target as HTMLElement).closest('a,button,input,textarea')) return
+      origin.current = { x: e.clientX, y: e.clientY }
+      cancel()
+      timer.current = setTimeout(() => {
+        navigator.vibrate?.(10)
+        fire()
+      }, LONG_PRESS_MS)
+    },
+    onPointerMove: (e: PointerEvent<HTMLElement>) => {
+      if (Math.hypot(e.clientX - origin.current.x, e.clientY - origin.current.y) > 8) cancel()
+    },
+    onPointerUp: cancel,
+    onPointerCancel: cancel,
+    onContextMenu: (e: MouseEvent<HTMLElement>) => {
+      if (isCoarse()) e.preventDefault()
+    },
+  }
+}
+
+function Footer({
+  pending,
+  readers,
+  onRetry,
+  onDiscard,
+}: {
+  pending?: Pending
+  readers: Member[]
+  onRetry: (opKey: string) => void
+  onDiscard: (opKey: string) => void
+}) {
+  if (!pending && !readers.length) return null
+  return (
+    <MessageFooter className="min-h-0 gap-1.5 px-0">
+      {pending?.status === 'error' ? (
+        <span className="flex items-center gap-1 text-destructive">
+          <AlertCircle className="size-3.5" />
+          <span className="text-[12px]">{pending.error || '发送失败'}</span>
+          <Action label="重试" onClick={() => onRetry(pending.opKey)}>
+            <RotateCcw />
+          </Action>
+          <Action label="删除" danger onClick={() => onDiscard(pending.opKey)}>
+            <Trash2 />
+          </Action>
+        </span>
+      ) : pending ? (
+        <span className="text-[11px] text-muted-foreground">发送中…</span>
+      ) : (
+        <Readers readers={readers} />
+      )}
+    </MessageFooter>
+  )
+}

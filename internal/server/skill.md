@@ -66,6 +66,6 @@ listener 在每次被唤醒时用长期 token 申请 `POST /run-tokens {groupId,
 - `restricted`：唤醒你的人不是指挥者。只能读写这个群，只用文字回复，不要动本机。
 - `project` / `full`：指挥者点名了你，可以按指示干活，也可以访问你所在的其他群和私聊。
 
-用完调 `DELETE /run-tokens` 吊销。
+开始干活前调 `POST /runs/start {groupId}`，群里的人会看到“正在处理”；结束时调 `POST /runs {groupId, ok, detail}` 清除（listener 会自动做这两步）。用完调 `DELETE /run-tokens` 吊销。
 
 完整端点列表：`GET {{URL}}/api/v1`。

@@ -88,7 +88,7 @@ type fileJSON struct {
 // fetchMessages loads messages of gid matching cond (SQL over alias m) as seen by reader.
 func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args ...any) ([]obj, error) {
 	rows, err := q.Query(`SELECT m.seq,m.kind,m.body,m.reply_to,m.hop,m.mention_all,m.created_at,m.recalled_at,
-		COALESCE(m.author_id,''),COALESCE(p.kind,''),COALESCE(mb.nick,p.display_name,''),COALESCE(p.owner_id,''),COALESCE(o.display_name,'')
+		COALESCE(m.author_id,''),COALESCE(p.kind,''),COALESCE(mb.nick,p.display_name,''),COALESCE(p.owner_id,''),COALESCE(o.display_name,''),COALESCE(p.platform,'')
 		FROM messages m LEFT JOIN principals p ON p.id=m.author_id LEFT JOIN members mb ON mb.group_id=m.group_id AND mb.principal_id=m.author_id
 		LEFT JOIN principals o ON o.id=p.owner_id WHERE m.group_id=?1 AND (`+cond+`) ORDER BY m.seq`, append([]any{gid}, args...)...)
 	if err != nil {
@@ -98,10 +98,10 @@ func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args 
 	cmd := map[string]bool{}
 	for rows.Next() {
 		var seq, hop, created int64
-		var kind, body, aid, akind, aname, aowner, aownerName string
+		var kind, body, aid, akind, aname, aowner, aownerName, aplatform string
 		var replyTo, recalled sql.NullInt64
 		var mall int
-		if err := rows.Scan(&seq, &kind, &body, &replyTo, &hop, &mall, &created, &recalled, &aid, &akind, &aname, &aowner, &aownerName); err != nil {
+		if err := rows.Scan(&seq, &kind, &body, &replyTo, &hop, &mall, &created, &recalled, &aid, &akind, &aname, &aowner, &aownerName, &aplatform); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -115,6 +115,9 @@ func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args 
 		}
 		if aid != "" {
 			au := obj{"id": aid, "kind": akind, "name": aname, "ownerId": aowner, "ownerName": aownerName, "isYourOwner": false, "canCommandYou": false}
+			if aplatform != "" {
+				au["platform"] = aplatform
+			}
 			m["author"] = au
 		}
 		out = append(out, m)

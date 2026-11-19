@@ -36,7 +36,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := New(Config{PublicURL: "http://pichat.test", Data: dir}, db, Assets{Web: fstest.MapFS{"index.html": {Data: []byte("<html>")}}, Listener: []byte("//")})
+	s := New(Config{PublicURL: "http://pichat.test", Data: dir}, db, Assets{Web: fstest.MapFS{"index.html": {Data: []byte("<html>")}, "assets/app-1a2b.js": {Data: []byte("//")}, "icon.svg": {Data: []byte("<svg/>")}}, Listener: []byte("//")})
 	s.WakeDelay = 50 * time.Millisecond
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(func() { s.Close(); ts.Close() })
@@ -738,6 +738,16 @@ func TestCSRFAndStatic(t *testing.T) {
 			t.Fatalf("%s: %v %v", p, err, resp.Status)
 		}
 		resp.Body.Close()
+	}
+	for p, cc := range map[string]string{"/": "no-cache", "/static/assets/app-1a2b.js": "immutable", "/static/icon.svg": "no-cache"} {
+		resp, err := http.Get(e.ts.URL + p)
+		if err != nil || resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Cache-Control"), cc) {
+			t.Fatalf("%s: %v %v %q", p, err, resp.Status, resp.Header.Get("Cache-Control"))
+		}
+		resp.Body.Close()
+	}
+	if resp, _ := http.Get(e.ts.URL + "/static/missing.js"); resp.StatusCode != 404 {
+		t.Fatalf("missing static: %d", resp.StatusCode)
 	}
 }
 

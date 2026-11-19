@@ -101,7 +101,7 @@ func (s *Server) groupJSON(q querier, a *actor, gid string) (obj, error) {
 		}
 	}
 	return obj{"id": g.ID, "kind": g.Kind, "name": name, "topic": g.Topic, "ownerId": g.OwnerID, "lastSeq": g.LastSeq,
-		"myRole": myRole, "members": ms, "createdAt": g.CreatedAt}, nil
+		"myRole": myRole, "members": ms, "working": s.work.list(gid), "createdAt": g.CreatedAt}, nil
 }
 
 // addMember inserts pid into gid with a unique nick; existing members are returned unchanged.
@@ -245,7 +245,7 @@ func (s *Server) listGroups(c *ctx) (any, error) {
 			continue
 		}
 		list = append(list, row{sum: obj{"id": id, "kind": kind, "name": name, "topic": topic, "lastSeq": lastSeq,
-			"unread": unread, "mentionsMe": ment, "lastMessage": nil}, id: id, kind: kind, lastSeq: lastSeq, sortKey: created})
+			"unread": unread, "mentionsMe": ment, "working": s.work.ids(id), "lastMessage": nil}, id: id, kind: kind, lastSeq: lastSeq, sortKey: created})
 	}
 	rows.Close()
 	out := make([]obj, 0, len(list))
@@ -274,10 +274,14 @@ func (s *Server) listGroups(c *ctx) (any, error) {
 			}
 		}
 		if r.kind == "dm" {
-			var pid, dn, kind string
-			if err := s.db.R.QueryRow(`SELECT p.id,p.display_name,p.kind FROM members m JOIN principals p ON p.id=m.principal_id WHERE m.group_id=? AND m.principal_id<>? LIMIT 1`, r.id, c.a.ID).Scan(&pid, &dn, &kind); err == nil {
+			var pid, dn, kind, platform string
+			if err := s.db.R.QueryRow(`SELECT p.id,p.display_name,p.kind,COALESCE(p.platform,'') FROM members m JOIN principals p ON p.id=m.principal_id WHERE m.group_id=? AND m.principal_id<>? LIMIT 1`, r.id, c.a.ID).Scan(&pid, &dn, &kind, &platform); err == nil {
 				r.sum["name"] = dn
-				r.sum["peer"] = obj{"id": pid, "displayName": dn, "kind": kind}
+				peer := obj{"id": pid, "displayName": dn, "kind": kind}
+				if platform != "" {
+					peer["platform"] = platform
+				}
+				r.sum["peer"] = peer
 			}
 		}
 	}

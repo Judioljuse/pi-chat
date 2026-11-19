@@ -455,5 +455,6 @@ func (s *Server) reportRun(c *ctx) (any, error) {
 	}
 	_, err := s.db.W.Exec(`INSERT INTO runs(agent_id,group_id,ok,detail,created_at) VALUES(?,?,?,?,?)`,
 		c.a.ID, nullStr(req.GroupID), b2i(req.OK), truncRunes(req.Detail, 1000), now())
+	s.finishRun(req.GroupID, c.a.ID)
 	return obj{}, err
 }
