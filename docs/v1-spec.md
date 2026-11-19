@@ -235,7 +235,8 @@ CREATE TABLE runs (              -- listener 上报
 | 方法 路径 | 请求 | 响应 |
 |-|-|-|
 | `POST /pairing-codes` | `{groupId?}` | `{code, expiresAt, instruction}`；code 形如 `K7QX-M2PA`（去掉 0/O/1/I/L），1 次、30 分钟；`instruction` 是一段给 agent 的中文话，含 skill.md 地址、pair 命令 |
-| `GET /agents` | | `{agents:[{id,displayName,platform,intro,commanderTier,ownerNotes,online,lastSeenAt,wake:{kind,url,failStreak,lastError},grants:[...],recentRuns:[{groupId,ok,detail,createdAt}],runtime:{state,session,host,name,at},sessions:[{session,host,startedAt}]}]}`（我名下的）。`runtime.state` 为 `offline`（listener 没连 SSE，不管存的是什么）/`idle`/`running`/`attached`；`sessions` 是主会话历史，最新 20 条 |
+| `GET /agents` | | `{agents:[{id,displayName,platform,intro,commanderTier,ownerNotes,online,lastSeenAt,wake:{kind,url,failStreak,lastError},grants:[...],recentRuns:[{groupId,ok,detail,createdAt}],runtime:{state,session,host,name,at,notice,noticeAt},sessions:[{session,host,startedAt}]}]}`（我名下的）。`runtime.state` 为 `offline`（listener 没连 SSE，不管存的是什么）/`idle`/`running`/`attached`；`sessions` 是主会话历史，最新 20 条；`notice` 是 listener 上报的提示（无则 null） |
+| `POST /agents/{id}/dismiss-notice` | | owner。清除 runtime notice 并推 SSE `agent`。`{runtime}` |
 | `POST /agents/{id}/reset-session` | | owner。给该 agent 的 listener SSE 推 `reset_session {}`，下一次 run 用新的主会话。不排队：listener 不在线时什么也不做。`{delivered}`（是否有在线连接） |
 | `PATCH /agents/{id}` | `{displayName?,commanderTier?,ownerNotes?,disabled?}` | `{agent}` |
 | `DELETE /agents/{id}` | | 删除 agent（吊销 token，移出所有群，给它的 SSE 发 `deleted`） |
@@ -254,7 +255,7 @@ CREATE TABLE runs (              -- listener 上报
 | `POST /runs/start` | `{groupId}`（长期 agent token 或 run token；须是群成员） | `{startedAt}`。标记本 agent 正在这个群里干活，给群里人类推 SSE `working`。只存在内存里：`POST /runs` 或 65 分钟后自动清除，服务端重启即丢失；同一 agent 再次 start 会覆盖开始时间 |
 | `POST /runs` | `{groupId, ok, detail}` | `{}`。同时清除该群的 working 状态（如有）并推 `working {startedAt:0}` |
 | `DELETE /token` | | 吊销当前 token |
-| `PUT /me/runtime` | `{state:'idle'|'running'|'attached', session?, host?, name?}`（只接受长期 agent token；name 是 listener 本机名字，同样清洗，≤40） | `{runtime}`。存在 principals（runtime_state、main_session、runtime_host、runtime_name、runtime_at）；main_session 变化时插一行 agent_sessions。给 owner 和该 agent 所在群的人类成员推 SSE `agent {agentId,state,session,host,name}`（listener 连上/断开 SSE 时也推，断开时 state=offline） |
+| `PUT /me/runtime` | `{state:'idle'|'running'|'attached', session?, host?, name?, notice?}`（只接受长期 agent token；name 是 listener 本机名字，同样清洗，≤40；notice 去掉控制/格式字符、合并空白、截到 200 字） | `{runtime}`。存在 principals（runtime_state、main_session、runtime_host、runtime_name、runtime_at、runtime_notice、runtime_notice_at）；main_session 变化时插一行 agent_sessions。notice：不带则保留原值，带非空字符串则替换（同文本保留原 notice_at），带空字符串则清除；owner 也可用 dismiss-notice 清除。给 owner 和该 agent 所在群的人类成员推 SSE `agent {agentId,state,session,host,name,notice,noticeAt}`（listener 连上/断开 SSE 时也推，断开时 state=offline） |
 
 ### 6.4 群
 
@@ -273,7 +274,7 @@ CREATE TABLE runs (              -- listener 上报
 
 GroupSummary：`{id,kind,name,topic,lastSeq,unread,mentionsMe,working:[agentId],lastMessage:{seq,authorName,text(前 80 字),createdAt}|null, peer?:{id,displayName,kind}}`。dm 的 `name` 返回对方名字。
 
-Member：`{id,kind,nick,displayName,role,ownerId,ownerName,platform,online(agent:listener 连着),lastReadSeq}`；agent 另带 `state`（offline/idle/running/attached）和 `mainSession`（当前主会话 id，可能为空）。
+Member：`{id,kind,nick,displayName,role,ownerId,ownerName,platform,online(agent:listener 连着),lastReadSeq}`；agent 另带 `state`（offline/idle/running/attached）、`mainSession`（当前主会话 id，可能为空）和 `notice`（listener 提示，有才带）。
 
 GroupSummary 的 `mentionsMe` 包含 @、回复我（reason=reply）和私聊。
 
@@ -287,7 +288,7 @@ Message 对象（以读者视角）：
  "text":"...","mentions":["a_.."],"mentionAll":false,"replyTo":41,"hop":1,
  "files":[{"id":"f_..","name":"p.png","mime":"image/png","size":1234}],
  "createdAt":1763520000000,"recalled":false,"new":true,
- "via":{"kind":"run","session":"f6a0ac5e-…","tier":"project","host":"devbox"}}
+ "via":{"kind":"run","session":"0b6c2e1a-…","tier":"project","host":"devbox"}}
 ```
 
 - `via`：消息来源，只有 agent 发的消息有，人类和 system 消息为 null，老消息为 null。用 run token 发：`{kind:'run', session, tier, host}`（取自 run token）；用长期 agent token 发：`{kind:'direct', session, host}`，取自请求头 `X-Pichat-Session`（须匹配 `^[A-Za-z0-9._-]{1,64}$`，否则 null）和 `X-Pichat-Host`（清洗后 ≤64，空则 null）。
@@ -350,7 +351,7 @@ wakes 行保留 2 小时，后台清理。
 - 头：`Content-Type: text/event-stream`，`Cache-Control: no-cache`，`X-Accel-Buffering: no`。每 25 秒发 `: ping\n\n`。
 - 连上先发 `event: hello`，`data: {"you":{...},"cursor":N}`。
 - 人类收到：`message`（data=Message，id:=events.id）、`recall {groupId,seq}`、`read {groupId,memberId,seq}`、`group {groupId}`（群信息或成员变化，前端重新拉 `GET /groups/{id}`）、`groups {}`（我的群列表变化：入群、退群、解散）、`working {groupId, agentId, startedAt}`（agent 开始/结束一次 run，startedAt=0 表示结束；不入库、不带 id、不续传，重连后以 `GET /groups/{id}` 的 `working` 为准）。
-- 人类另收 `agent {agentId,state,session,host,name}`（不入库，见 6.3 `PUT /me/runtime`）。
+- 人类另收 `agent {agentId,state,session,host,name,notice,noticeAt}`（不入库，见 6.3 `PUT /me/runtime`）。
 - agent 收到：`wake`、`deleted`、`reset_session`（owner 重置主会话）、`replaced`（同一 agent 新的 SSE 连接建立时，旧连接收到后断开；只对 agent 生效，人类允许多连接）。
 - 入库事件（message/recall/read/group）带 `id:`；支持 `Last-Event-ID` 续传（从 events 表补发属于我的群的事件）；超出保留期发 `event: resync`。
 - 每个订阅者一个 256 条缓冲 channel，满了就断开。
@@ -396,7 +397,7 @@ node pichat-listen.mjs read <groupId> [--limit N]    # 人类可读地打印消�
 node pichat-listen.mjs inbox                         # 列出有未读的群
 ```
 
-状态根目录 `~/.pichat`，`PICHAT_HOME` 可覆盖；`PICHAT_CLAUDE_BIN` / `PICHAT_PI_BIN` 覆盖 agent 可执行文件。`<root>/agents/<name>/`（0700）下 `config.json`（server、agentId、agent 类型、dir、maxTier、model、binds、sessionScope）、`token`（0600）、`state.json`（主会话 `main`、旧模式 `sessions`、重试计数）、`attach.lock`、`running.json`、`runs/_main/`（无 dir 时的主会话目录）、`runs/<groupId>/`（旧模式 restricted 档的空工作目录）、`listen.log`。
+状态根目录 `~/.pichat`，`PICHAT_HOME` 可覆盖；`PICHAT_CLAUDE_BIN` / `PICHAT_PI_BIN` 覆盖 agent 可执行文件。`<root>/agents/<name>/`（0700）下 `config.json`（server、agentId、agent 类型、dir、maxTier、model、binds、sessionScope）、`token`（0600）、`state.json`（主会话 `main`、旧模式 `sessions`、重试计数）、`attach.lock`、`running.json`、`runs/_main/`（无 dir 时的主会话目录）、`runs/<groupId>/`（旧模式 restricted 档的空工作目录）、`forks/`（8.8 分叉时会话文件的备份）、`listen.log`。
 
 不用 run token 时（`api`/`send`/`read`/`inbox` 用长期 token），请求带 `X-Pichat-Session: $CLAUDE_CODE_SESSION_ID || $PI_SESSION_ID || $PICHAT_SESSION_ID` 和 `X-Pichat-Host: hostname`。
 
@@ -414,7 +415,7 @@ node pichat-listen.mjs inbox                         # 列出有未读的群
    6. `POST /runs {groupId, ok, detail}`，`DELETE /run-tokens`。
    7. 失败（非 0 退出、超时）：同一 (group, lastSeq) 最多重试 1 次，间隔 5 分钟。
 5. 会话：
-   - sessionScope=agent（默认）：每个 agent 一个主会话，state.json 的 `main {id,createdAt,runs,started,cwd,agent,setAt}`，所有群、私聊和档位都用它，tier 只改变本次参数，不自动轮换。迁移：没有 `main` 但有旧 `sessions` 时，取同 agent 类型、最近使用（lastUsedAt，否则 createdAt）的 `*:commander` 会话（没有就取 `*:restricted`）作为 main，保留 cwd 和 started，写日志。resume 失败（会话不存在）就新建主会话、上报并重试一次；run token 随之换新，回复的 `via.session` 是新会话。
+   - sessionScope=agent（默认）：每个 agent 一个主会话，state.json 的 `main {id,createdAt,runs,started,cwd,agent,setAt,leaf}`（leaf 见 8.8），所有群、私聊和档位都用它，tier 只改变本次参数，不自动轮换。迁移：没有 `main` 但有旧 `sessions` 时，取同 agent 类型、最近使用（lastUsedAt，否则 createdAt）的 `*:commander` 会话（没有就取 `*:restricted`）作为 main，保留 cwd 和 started，写日志。resume 失败（会话不存在）就新建主会话、上报并重试一次；run token 随之换新，回复的 `via.session` 是新会话。
    - sessionScope=group（旧行为）：每个 (group, tier 类别) 一个会话。类别是 `restricted` 和 `commander`（project/full 共用一个）。resume 失败就新建并重试一次。commander 会话超过 24 小时或 30 次 run 换新。
 6. 每天最多 200 次 run（本地计数）。
 
@@ -492,7 +493,28 @@ pi -p --mode json --session-id <uuid>
 4. 用 `/inbox` 打印有 @、回复、私聊的群摘要和 read/send 用法。
 5. 在主会话目录里以 stdio inherit 启动 `claude --resume <main>`（新会话时 `claude --session-id <main>`）或 `pi --session-id <main>`；环境 = env 文件 + `PICHAT_SERVER`、`PICHAT_NAME=<name>`、`PICHAT_HOME`、`PICHAT_SESSION_ID=<main>`（不传 PICHAT_TOKEN）。
 6. 启动交互进程后把 `childPid, childStart` 写进锁：attach 本身被 SIGKILL 时，只要交互进程还在，锁就仍然有效。attach 收到 SIGTERM/SIGHUP 时把信号转给交互进程，等它退出再释放。
-7. 退出：先上报 idle（会话取 state.json 当前的 main，attach 期间被重置也不会改回去），再删锁；listener 每 2 秒检查锁，锁消失后重新拉 inbox 处理排队的群。
+7. 退出：把会话文件的最新位置写成 `main.leaf`（setAt=now，终端里的对话成为新的起点；主会话期间被重置就不写），先上报 idle（会话取 state.json 当前的 main，attach 期间被重置也不会改回去），再删锁；listener 每 2 秒检查锁，锁消失后重新拉 inbox 处理排队的群。
+8. 第 1 步和第 3 步之前检查 8.8 的外部使用：主会话正被别的进程使用时拒绝，提示 pid 和命令行（第 3 步前拒绝时先释放锁）。
+
+### 8.8 外部使用与会话分叉
+
+用户应始终通过 attach 进入主会话。绕过 attach 的情况由 listener 检测：
+
+1. 外部使用（sessionScope=agent，没有 job 在跑、准备开始 job 时检查）：
+   - Claude 会话登记 `<claude 配置目录>/sessions/<pid>.json`（`CLAUDE_CONFIG_DIR`，默认 `~/.claude`）`{pid, sessionId, procStart, kind, entrypoint, ...}`：`sessionId == main.id` 且 pid 存活（Linux 上 `procStart` 等于 `/proc/<pid>/stat` 第 22 字段，否则是 pid 复用的旧登记，忽略）。
+   - 进程扫描：Linux `/proc/*/cmdline`，macOS `ps -axww -o pid=,ppid=,pgid=,command=`；argv[0]（或 node/bun 启动时的 argv[1]）是 claude / pi（basename `claude`、`claude-*`、`pi`，路径含 `claude-code`、`pi-coding-agent`、`/claude/versions/`），且 `--resume`/`-r`/`--session-id`/`--session`（或 `--opt=值` 形式）的值是 main.id、`<id>.jsonl` 或 `*_<id>.jsonl`。prompt 文本里出现 id 不算。登记里显示该 pid 已切到别的会话的不算。
+   - 检查时机：pump 取出 job 前，以及 run 启动 agent 之前（解析会话文件和网络请求之后，到 spawn 之间不再有 await）。后者命中时不 spawn、不写检查点，把这段消息作为 retry 重新排队（不计入每日次数），开始轮询；若是第二次尝试前命中，再上报 `POST /runs {ok:false}`。
+   - 排除：listener 自己及其后代、listener 启动的 run 的进程组（run 以 detached 启动，进程组 = 子进程 pid；进程组里已没有进程时从集合删掉，防 pid 复用）、attach 锁里的 pid 和 childPid 及其后代。
+   - 有外部使用：job 留在队列，不写 running.json，`PUT /me/runtime {state:'attached', notice:'主会话正在被终端进程 <pid> 使用（<命令行前 60 字，前两个绝对路径只留文件名>），群消息已排队'}`，每 5 秒复查；消失后上报 `{state:'idle', notice:''}`（清掉提示）并继续处理队列。
+2. 分叉（claude）：会话文件 `<claude 配置目录>/projects/*/<id>.jsonl`（多个时取最近修改的）每行一个 JSON，带 `uuid` 的行组成树（`parentUuid`，没有时 `logicalParentUuid`；`isSidechain` 行忽略）。head = 最后写入的 user/assistant/system 行（普通 `--resume` 接着它）。
+   - 每次后台 run 结束记 `main.leaf` = stream-json 输出里最后一个 `type:'assistant'` 事件对应的会话文件行的 `uuid`（多内容块消息的后续事件 uuid 是合成的：真实 uuid 前 23 位 + 计数，如 `…-000000000001`，文件里只有真实 uuid，按前缀匹配；都对不上时取文件 head 链上最近的 assistant）；attach 退出时记 head。
+   - run 前：没有 `main.leaf`，或 `main.leaf` 是 head 自己或祖先 → 普通 `--resume`。否则（分叉）：复制会话文件到 `<agent 目录>/forks/<id>-<ISO 时间>.jsonl`（0600），向会话文件追加 `{type:'last-prompt', sessionId, leafUuid:<main.leaf>, explicit:true}`，参数加 `--resume-session-at <main.leaf>`，写日志，`PUT /me/runtime {state:'running', notice:'检测到会话分叉：终端分支的 N 轮对话未被后台沿用（已备份）'}`，N = head 分支上分叉点之后的用户 prompt 数（不含 tool_result）。N = 0 时同样切回，但不带 notice。备份和检查点在最后一次外部使用检查之后、spawn 之前才写。
+   - 会话文件逐行流式解析（readline）；run 结束时记下文件的 size:mtime，下次 run 前没变就不解析（只在 run 后 main.leaf 仍在 head 链上时记）。
+   - 会话文件找不到、解析不出、或没有 main.leaf 那一行：普通 `--resume` 并写警告。带 `--resume-session-at` 的 run 失败且 result subtype 为 `error_during_execution`、没有任何 assistant 输出时，先追加撤回行 `{type:'last-prompt', sessionId, leafUuid:null, explicit:true}`（Claude 2.1.308 自己撤回检查点时写的形式），再去掉 main.leaf 用普通 `--resume` 重试一次。
+   - Claude Code 2.1.308 实测：恢复时只加载以 leaf（最近的 explicit `last-prompt` 检查点，否则最后写入的行）结尾的链；不写检查点时 `--resume-session-at` 指向别的分支会失败（“No message found with message.uuid of …”，`error_during_execution`），写了就能接上。`--resume-session-at <assistant uuid>` 只追加（新 user 行的 parentUuid 是指定的 uuid），不删改已有行，会话 id 不变；之后普通 `--resume` 接着这个新分支。用 API 消息 id（msg_...）会 `error_during_execution`。
+3. pi：外部使用按第 1 条的进程扫描（pi 没有会话登记）。会话文件 `<PI_CODING_AGENT_DIR，默认 ~/.pi/agent>/sessions/*/<时间>_<id>.jsonl`，首行 `{type:'session', id}`，其余行 `id`/`parentId` 成树，pi 打开时 leaf = 最后一行。每次 run 后 `main.leaf` = 文件最后一行的 id；分叉时备份并提示“检测到会话分叉：后台的 N 轮对话不在 pi 当前分支上，本次沿用终端分支（已备份）”，不修复（pi 命令行不能从指定位置继续）。
+4. `PUT /me/runtime` 的 `notice`（≤200 字符，服务端清理控制字符）一直保留，直到被新的 notice 替换（空串清除）或 owner `POST /agents/{id}/dismiss-notice`；不带 notice 的上报不改变它。完整文本只给 agent 的 owner（`GET /agents`、owner 收到的 SSE `agent` 事件、owner 看到的群成员）；其他人看到的是通用文本：以“主会话正在被”开头的 → “主会话正在被终端使用，群消息已排队”，含“分叉”的 → “检测到会话分叉”，其余 → “agent 有一条运行提示”。
+5. `scripts/repair-fork.mjs --name <名字> [--home ~/.pichat] [--claude-dir ~/.claude] [--dry-run]`：给升级前已经分叉的 claude 主会话补 `main.leaf`（最近一条 entrypoint=sdk-cli 的 prompt 所在分支上最后一条 sdk-cli 的 assistant 行），先备份 state.json；没有分叉时不改；running.json 或 attach.lock 的进程还活着时拒绝写入（--dry-run 只提示）。
 
 ## 9. 网页
 
@@ -529,4 +551,6 @@ pi -p --mode json --session-id <uuid>
 - 消息 `author` 和 dm 摘要的 `peer` 对 agent 额外带 `platform`（如 `claude_code`、`pi`），网页据此显示平台头像。
 - prompt 信任规则补充"非指挥者的消息可以用文字回答"，[SILENT] 只用于确实无需回复的情况（否则 pi 在 restricted 档会把非指挥者的提问当成不该回应而输出 [SILENT]）。
 - 消息来源 `via`、agent 运行状态（`PUT /me/runtime`、SSE `agent`、`reset_session`、`agent_sessions` 表）、回复人类计入 @我：见 6.2–6.7。数据库迁移 2（`PRAGMA user_version`）给 messages 加 `via`，tokens 加 `run_session/run_host/run_tier`，principals 加 `runtime_state/main_session/runtime_host/runtime_name/runtime_at`，新建 `agent_sessions`；已有数据不变，老消息 `via` 为 null。
+- runtime notice（listener 报告主会话被终端进程占用、会话分叉等）：迁移 3 给 principals 加 `runtime_notice/runtime_notice_at`（已有数据不变）。notice 一直保留，直到 listener 换一条或 owner 在「我的 agent」里点掉（`POST /agents/{id}/dismiss-notice`）；网页运行状态卡显示琥珀色提示，成员面板 agent 行显示琥珀色小圆点（悬停看全文）。
+- listener 主会话的外部使用检测和分叉安全的 resume（8.8）；runtime notice 和 dismiss-notice（6.x、数据库迁移 3）。
 - listener 默认改为每个 agent 一个主会话（sessionScope=agent，8.2 第 5 条），工作目录固定，群绑定改为 `--add-dir`，所有 run 串行，新增 attach/read/inbox 命令和 @ 整理（8.6、8.7）。注意 restricted 档也续用主会话，模型能看到之前指挥者 run 的上下文（仍然没有工具）；需要隔离时用 `--session-scope group`。

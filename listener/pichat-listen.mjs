@@ -7,6 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import readline from 'node:readline';
 
 const SCRIPT = fileURLToPath(import.meta.url);
 // PICHAT_HOME overrides the state root (tests, several setups on one machine).
@@ -18,7 +19,7 @@ const TIERS = ['restricted', 'project', 'full'];
 const AGENTS = { claude: 'claude_code', pi: 'pi' };
 const PROJECT_TOOLS = 'Bash Read Edit Write MultiEdit Glob Grep LS NotebookEdit TodoWrite WebFetch WebSearch';
 const QUIET_MS = 90e3, INBOX_EVERY = 10 * 60e3, IDLE_MS = 15 * 60e3, MAX_MS = 60 * 60e3;
-const RETRY_MS = 5 * 60e3, MAX_PARALLEL = 2, DAILY_CAP = 200, MAX_TEXT = 10000, EXIT_GRACE_MS = 1000;
+const RETRY_MS = 5 * 60e3, MAX_PARALLEL = 2, DAILY_CAP = 200, MAX_TEXT = 10000, EXIT_GRACE_MS = 1000, EXTERNAL_POLL_MS = 5000;
 
 // ---------- args & files ----------
 
@@ -374,6 +375,7 @@ class Listener {
     this.queue = [];
     this.active = 0;
     this.children = new Set();
+    this.childGroups = new Set(); // process groups of spawned runs (detached): never "external"
     this.isRoot = process.getuid?.() === 0;
   }
 
@@ -395,9 +397,11 @@ class Listener {
 
   // ---- agent runtime (main session, attach lock) ----
 
-  reportRuntime(state) {
+  // notice (optional) is shown to the owner until replaced or dismissed on the web page.
+  reportRuntime(state, notice) {
     const body = { state, host: HOST, name: this.name };
     if (this.scope === 'agent' && this.state.main?.id) body.session = this.state.main.id;
+    if (notice !== undefined) body.notice = notice;
     return this.call('PUT', '/me/runtime', body).catch((e) => this.log('上报运行状态失败：', e.message));
   }
 
@@ -435,6 +439,44 @@ class Listener {
   }
 
   attachLive() { return lockAlive(path.join(this.dir, 'attach.lock')); }
+  // Neither attach nor an external terminal holds the main session: idle/running may be reported.
+  free() { return !this.extTimer && !this.attachLive(); }
+  agentEnv() { return { ...process.env, ...readEnvFile(this.dir) }; }
+
+  // Processes outside this listener (and outside attach) that use the main session, e.g. a
+  // `claude --resume <main>` the user started directly in a terminal.
+  externalUsers() {
+    if (this.scope !== 'agent') return [];
+    this.syncMain();
+    const id = this.state.main?.id;
+    if (!id) return [];
+    const lock = readJSON(path.join(this.dir, 'attach.lock'));
+    // Forget process groups that are gone, so a recycled pid is never mistaken for one of ours.
+    const live = new Set([...this.children].map((c) => c.pid));
+    for (const g of this.childGroups) {
+      if (live.has(g)) continue;
+      try { process.kill(-g, 0); } catch (e) { if (e.code === 'ESRCH') this.childGroups.delete(g); }
+    }
+    return sessionUsers(id, this.agentEnv(), [process.pid, lock?.pid, lock?.childPid], this.childGroups);
+  }
+
+  // Queued work waits (polling every 5 s) while an external process holds the main session.
+  waitExternal(u) {
+    if (this.extTimer) return;
+    const notice = `主会话正在被终端进程 ${u.pid} 使用（${u.cmd.slice(0, 60)}），群消息已排队`;
+    this.log(notice);
+    this.reportRuntime('attached', notice);
+    this.extTimer = setInterval(() => {
+      if (this.externalUsers().length) return;
+      clearInterval(this.extTimer);
+      this.extTimer = null;
+      this.log('终端进程已退出，处理排队的消息');
+      // The in-use notice no longer applies ('' clears it on the server).
+      if (!this.attachLive()) this.reportRuntime('idle', '');
+      this.pump();
+    }, EXTERNAL_POLL_MS);
+    this.extTimer.unref?.();
+  }
 
   // Queued work waits while an interactive `attach` holds the lock.
   waitAttach() {
@@ -537,7 +579,7 @@ class Listener {
     try { data = JSON.parse(raw); } catch {}
     if (type === 'hello') {
       this.log('已连接');
-      if (!this.attachLive()) this.reportRuntime(this.active ? 'running' : 'idle');
+      if (this.free()) this.reportRuntime(this.active ? 'running' : 'idle');
       this.pollInbox('hello');
     }
     else if (type === 'reset_session') {
@@ -545,7 +587,7 @@ class Listener {
       // During a run the old session is still in use: switch once it finishes.
       if (this.scope === 'agent') { if (this.active) { this.resetPending = true; this.log('当前 run 结束后换新主会话'); } else this.newMain('owner 重置'); }
       else { this.state.sessions = {}; this.saveState(); }
-      if (!this.attachLive()) this.reportRuntime(this.active ? 'running' : 'idle');
+      if (this.free()) this.reportRuntime(this.active ? 'running' : 'idle');
     }
     else if (type === 'wake') {
       this.log(`唤醒：群 ${data.groupId} wake ${data.wakeId} seq ${data.seq} commander=${!!data.commander}`);
@@ -608,6 +650,11 @@ class Listener {
         this.waitAttach();
         return;
       }
+      if (this.extTimer) { if (this.active === 0) this.clearRunning(); return; }
+      if (this.active === 0) {
+        const ext = this.externalUsers();
+        if (ext.length) { this.clearRunning(); this.waitExternal(ext[0]); return; }
+      }
       const gid = this.queue.shift();
       const g = this.groups.get(gid);
       g.queued = false;
@@ -633,7 +680,7 @@ class Listener {
           if (this.active === 0 && this.resetPending) {
             this.resetPending = false;
             this.newMain('owner 重置');
-            if (!this.attachLive()) this.reportRuntime('idle');
+            if (this.free()) this.reportRuntime('idle');
           }
           if (g.pending || g.retries.length) this.schedule(gid, g);
           this.pump();
@@ -750,12 +797,25 @@ class Listener {
 
       this.log(`开始 run：群 ${gid} 档位 ${tier} 触发 #${trigger.seq} 目录 ${cwd}${bindDir ? ` 项目目录 ${bindDir}` : ''}${main ? ` 主会话 ${main.id}` : ''}`);
       if (process.env.PICHAT_DEBUG) this.log('prompt:\n' + prompt);
-      await this.call('POST', '/runs/start', { groupId: gid }).catch(() => {});
-      this.reportRuntime('running');
+      // Called right before the agent is spawned (after the last external-use check).
+      const onStart = (notice) => {
+        this.call('POST', '/runs/start', { groupId: gid }).catch(() => {});
+        this.reportRuntime('running', notice);
+      };
       const t0 = Date.now();
       let r;
-      try { r = await this.runWithSession({ gid, tier, cwd, env, prompt, addDirs: bindDir ? [bindDir] : [] }); ranSession = r.session || ranSession; }
-      finally { if (!this.attachLive()) this.reportRuntime(this.active > 1 ? 'running' : 'idle'); }
+      try { r = await this.runWithSession({ gid, tier, cwd, env, prompt, addDirs: bindDir ? [bindDir] : [], onStart }); ranSession = r.session || ranSession; }
+      finally { if (this.free()) this.reportRuntime(this.active > 1 ? 'running' : 'idle'); }
+      if (r.deferred) {
+        // A terminal took the main session after pump() checked: nothing ran. Requeue this range as
+        // a retry (the first fetch already marked it read) and wait for the terminal to exit.
+        if (this.state.daily?.count > 0) this.state.daily.count--;
+        this.saveState();
+        // (waitExternal is already polling, so this only queues.)
+        this.enqueue(gid, { retry: job.retry || { wake, lastSeq, fromSeq } });
+        if (r.started) await this.call('POST', '/runs', { groupId: gid, ok: false, detail: '主会话被终端进程占用，已排队，稍后重试' }).catch(() => {});
+        return;
+      }
       const secs = Math.round((Date.now() - t0) / 1000);
       let text = normalizeMentions((r.text || '').trim(), group.members || [], { ownerId });
       let detail = `${this.config.agent} ${tier} ${secs}s`;
@@ -802,17 +862,34 @@ class Listener {
     return s;
   }
 
-  async runWithSession({ gid, tier, cwd, env, prompt, addDirs }) {
+  async runWithSession({ gid, tier, cwd, env, prompt, addDirs, onStart = () => {} }) {
     const isMain = this.scope === 'agent';
     const s = isMain ? this.mainSession() : this.session(gid, tier, cwd);
+    const plan = isMain ? await this.forkPlan(s, env) : {};
+    // From here to the spawn everything is synchronous: the last external-use check cannot be
+    // overtaken by a terminal that starts while we were parsing the session file or fetching.
+    const busy = () => (isMain ? this.externalUsers()[0] : undefined);
+    let u = busy();
+    if (u) { this.waitExternal(u); return { deferred: u, session: s.id }; }
+    if (plan.apply) plan.apply();
+    onStart(plan.notice);
     let r;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const { cmd, args } = agentCommand(this.config, tier, s, addDirs);
+      if (attempt && (u = busy())) { this.saveState(); this.waitExternal(u); return { deferred: u, started: true, session: s.id }; }
+      const { cmd, args } = agentCommand(this.config, tier, s, addDirs, plan.resumeAt);
       r = await this.spawnAgent(cmd, args, cwd, env, prompt);
       if (this.config.agent !== 'claude' || r.ok) break;
-      if (/No conversation found/i.test(r.stderr)) {
+      if (plan.resumeAt && !r.leaf && r.subtype === 'error_during_execution') {
+        // The recorded leaf is unusable: continue the latest branch instead (the file is backed up).
+        // Withdraw our checkpoint first (the row Claude writes itself), else it still loads our branch.
+        this.log(`--resume-session-at ${plan.resumeAt} 失败，撤回检查点，改用普通 --resume 重试`);
+        if (plan.checkpointed) appendCheckpoint(plan.file, s.id, null, (e) => this.log(`警告：撤回会话检查点失败：${e.message}`));
+        plan.resumeAt = undefined;
+        delete s.leaf;
+      } else if (/No conversation found/i.test(r.stderr)) {
         this.log(`会话 ${s.id} 不存在，新建会话重试`);
         Object.assign(s, { id: crypto.randomUUID(), createdAt: Date.now(), runs: 0, started: false, setAt: Date.now() });
+        delete s.leaf;
         if (isMain) { this.log(`主会话换成 ${s.id}（原会话无法恢复）`); this.reportRuntime('running'); }
       } else if (/already in use/i.test(r.stderr) && !s.started) {
         this.log(`会话 ${s.id} 已存在，改用 --resume 重试`);
@@ -823,8 +900,63 @@ class Listener {
     s.started = true;
     s.lastUsedAt = Date.now();
     if (r.ok) s.runs++;
+    if (isMain) {
+      // Where this run left the conversation: claude reports it, pi's is the end of its file.
+      const h = this.config.agent === 'claude' ? await claudeLeaf(env, s.id, r.leaves) : await sessionHead(env, 'pi', s.id);
+      if (h.leaf) { s.leaf = h.leaf; this.parsed = { id: s.id, leaf: h.leaf, sig: h.sig }; }
+    }
     this.saveState();
     return { ...r, session: s.id };
+  }
+
+  // Someone may have appended to the main session from an older point (a terminal window that
+  // loaded the history earlier), forking it. A plain --resume follows the most recently written
+  // branch, which would silently drop the background runs: resume at our own leaf instead.
+  // Only reads here; plan.apply() (backup + checkpoint) runs right before the spawn.
+  async forkPlan(s, env) {
+    if (!s.started || !s.leaf) return {};
+    const agent = this.config.agent;
+    const file = findSessionFile(env, agent, s.id);
+    if (!file) { this.log(`警告：找不到会话 ${s.id} 的文件，按普通 --resume 继续`); return {}; }
+    // Unchanged since our last run ended there: no one appended, so no fork.
+    const p = this.parsed;
+    if (p && p.id === s.id && p.leaf === s.leaf && p.sig && p.sig === fileSig(fs.statSync(file, { throwIfNoEntry: false }))) return {};
+    let tree;
+    try { tree = await loadTree(file, agent); } catch (e) { this.log(`警告：解析会话文件 ${file} 失败（${e.message}），按普通 --resume 继续`); return {}; }
+    if (!tree.nodes.has(s.leaf)) { this.log(`警告：会话文件里没有记录的位置 ${s.leaf}，按普通 --resume 继续`); return {}; }
+    const f = forkInfo(tree, s.leaf);
+    if (!f) { this.parsed = { id: s.id, leaf: s.leaf, sig: tree.sig }; return {}; }
+    const backup = path.join(this.dir, 'forks', `${s.id}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`);
+    const doBackup = () => {
+      try {
+        fs.mkdirSync(path.dirname(backup), { recursive: true, mode: 0o700 });
+        fs.copyFileSync(file, backup);
+        fs.chmodSync(backup, 0o600);
+      } catch (e) { this.log(`警告：备份会话文件失败：${e.message}`); }
+    };
+    if (agent !== 'claude') {
+      // pi has no way to resume at an entry from the command line: warn only.
+      return {
+        apply: () => { doBackup(); this.log(`检测到会话分叉：后台的 ${f.kept} 轮对话不在 pi 当前分支上（终端分支 ${f.lost} 轮），本次沿用 pi 的最新分支，已备份到 ${backup}`); },
+        notice: `检测到会话分叉：后台的 ${f.kept} 轮对话不在 pi 当前分支上，本次沿用终端分支（已备份）`,
+      };
+    }
+    // Claude only loads the chain that ends at the newest leaf, so --resume-session-at alone cannot
+    // reach a message on another branch ("No message found"). An explicit last-prompt checkpoint
+    // (the row Claude itself writes on rewind) makes it load our branch. Verified on 2.1.308.
+    // A terminal branch without prompts (a window that only wrote system rows) is not worth a notice.
+    const plan = { file, resumeAt: s.leaf, notice: f.lost ? `检测到会话分叉：终端分支的 ${f.lost} 轮对话未被后台沿用（已备份）` : undefined };
+    plan.apply = () => {
+      doBackup();
+      plan.checkpointed = appendCheckpoint(file, s.id, s.leaf, (e) => this.log(`警告：写入会话检查点失败（${e.message}），按普通 --resume 继续`));
+      if (!plan.checkpointed) {
+        plan.resumeAt = undefined;
+        plan.notice = '检测到会话分叉，但没能切回后台分支：本次沿用终端分支（已备份）';
+        return;
+      }
+      this.log(`检测到会话分叉：终端分支 ${f.lost} 轮对话（最新 ${tree.head}），后台在 ${s.leaf} 继续（检查点 + --resume-session-at），已备份到 ${backup}`);
+    };
+    return plan;
   }
 
   spawnAgent(cmd, args, cwd, env, prompt) {
@@ -833,6 +965,10 @@ class Listener {
       try { child = spawn(cmd, args, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] }); }
       catch (e) { return resolve({ ok: false, error: e.message, stderr: '' }); }
       this.children.add(child);
+      if (child.pid) {
+        this.childGroups.add(child.pid);
+        if (this.childGroups.size > 50) this.childGroups.delete(this.childGroups.values().next().value);
+      }
       const parser = outputParser(this.config.agent);
       let out = '', stderr = '', why = '', idle;
       const kill = (reason) => {
@@ -867,7 +1003,7 @@ class Listener {
         // Background processes the agent started may still hold the pipes: keep draining
         // (so they never block on a full pipe) but discard the output.
         for (const st of [child.stdout, child.stderr]) { st.removeAllListeners('data'); st.on('data', () => {}); }
-        resolve({ ok, text: res.text, error: ok ? '' : `${error} ${stderr.trim().split('\n').slice(-3).join(' | ')}`.trim().slice(0, 600), stderr: stderr + '\n' + (res.errors || '') });
+        resolve({ ok, text: res.text, leaf: res.leaf, leaves: res.leaves, subtype: res.subtype, error: ok ? '' : `${error} ${stderr.trim().split('\n').slice(-3).join(' | ')}`.trim().slice(0, 600), stderr: stderr + '\n' + (res.errors || '') });
       };
       child.on('error', (e) => done(null, null, e));
       // 'close' waits for every pipe holder (e.g. a dev server the agent started); 'exit' plus a
@@ -885,10 +1021,11 @@ function killTree(child, sig) {
   try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch {} }
 }
 
-function agentCommand(config, tier, s, addDirs = []) {
+function agentCommand(config, tier, s, addDirs = [], resumeAt) {
   const args = ['-p'];
   if (config.agent === 'claude') {
     args.push(s.started ? '--resume' : '--session-id', s.id, '--output-format', 'stream-json', '--verbose');
+    if (s.started && resumeAt) args.push('--resume-session-at', resumeAt);
     if (tier !== 'restricted') for (const d of addDirs) args.push('--add-dir', d);
     if (tier === 'restricted') args.push('--tools', '', '--strict-mcp-config', '--setting-sources', '', '--permission-mode', 'dontAsk');
     // acceptEdits alone denies Bash in -p mode; allow the core tools explicitly and skip MCP servers.
@@ -903,13 +1040,17 @@ function agentCommand(config, tier, s, addDirs = []) {
 }
 
 function outputParser(agent) {
-  let last = null;
+  let last = null, leaf = '';
+  const leaves = [];
   const parse = (l) => { try { return JSON.parse(l); } catch { return null; } };
   if (agent === 'claude') return {
-    line(l) { const o = parse(l); if (o?.type === 'result') last = o; },
+    // leaf: uuid of the last assistant message, where the next run must continue (fork-safe resume).
+    // Streamed assistant uuids can be synthetic (…-000000000001) and absent from the session file, so all are
+    // kept and claudeLeaf maps them to the uuid the file really contains.
+    line(l) { const o = parse(l); if (o?.type === 'result') last = o; else if (o?.type === 'assistant' && typeof o.uuid === 'string') { leaf = o.uuid; leaves.push(o.uuid); } },
     result() {
-      if (!last) return { ok: false, error: '没有拿到 result' };
-      return { ok: !last.is_error, text: typeof last.result === 'string' ? last.result : '', error: last.is_error ? `result ${last.subtype} ${(last.errors || []).join('; ')}` : '', errors: (last.errors || []).join('\n') };
+      if (!last) return { ok: false, error: '没有拿到 result', leaf, leaves };
+      return { ok: !last.is_error, leaf, leaves, subtype: last.subtype, text: typeof last.result === 'string' ? last.result : '', error: last.is_error ? `result ${last.subtype} ${(last.errors || []).join('; ')}` : '', errors: (last.errors || []).join('\n') };
     },
   };
   return {
@@ -1004,6 +1145,210 @@ function lockAliveAfterRemove(file) {
   return !!l && holderAlive(l);
 }
 
+// ---------- session files, forks, external users ----------
+
+const claudeDir = (env) => (env.CLAUDE_CONFIG_DIR ? path.resolve(env.CLAUDE_CONFIG_DIR) : path.join(os.homedir(), '.claude'));
+const piDir = (env) => (env.PI_CODING_AGENT_DIR ? path.resolve(env.PI_CODING_AGENT_DIR.replace(/^~(?=\/|$)/, os.homedir())) : path.join(os.homedir(), '.pi', 'agent'));
+
+// Claude: <config>/projects/<cwd slug>/<id>.jsonl. pi: <agent dir>/sessions/<cwd slug>/<time>_<id>.jsonl.
+// If several match, the most recently written wins.
+function findSessionFile(env, agent, id) {
+  const root = agent === 'claude' ? path.join(claudeDir(env), 'projects') : path.join(piDir(env), 'sessions');
+  let best = '', mtime = -1;
+  let dirs = [];
+  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()); } catch { return ''; }
+  for (const d of dirs) {
+    let names;
+    if (agent === 'claude') names = [`${id}.jsonl`];
+    else { try { names = fs.readdirSync(path.join(root, d.name)).filter((n) => n.endsWith(`_${id}.jsonl`)); } catch { continue; } }
+    for (const n of names) {
+      const f = path.join(root, d.name, n);
+      const st = fs.statSync(f, { throwIfNoEntry: false });
+      if (st?.isFile() && st.mtimeMs > mtime) { best = f; mtime = st.mtimeMs; }
+    }
+  }
+  return best;
+}
+
+// A session file is an append-only tree. nodes: id -> { parent, prompt }; head: the entry the
+// agent continues from on a plain resume (the most recently written conversation entry).
+// Main sessions grow without bound (interactive ones reach 100 MB): stream the file line by line
+// so the event loop keeps serving SSE and heartbeats and no giant string is built. sig is the
+// file's size/mtime when parsed.
+async function loadTree(file, agent) {
+  const nodes = new Map();
+  let head = '';
+  const st = fs.statSync(file);
+  const rl = readline.createInterface({ input: fs.createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; } // a partly written last line
+    if (agent === 'claude') {
+      if (typeof o.uuid !== 'string' || o.isSidechain) continue;
+      nodes.set(o.uuid, { parent: o.parentUuid || o.logicalParentUuid || '', prompt: o.type === 'user' && isPrompt(o.message), assistant: o.type === 'assistant' });
+      if (['user', 'assistant', 'system'].includes(o.type)) head = o.uuid;
+    } else {
+      if (o.type === 'session' || typeof o.id !== 'string') continue;
+      nodes.set(o.id, { parent: o.parentId || '', prompt: o.type === 'message' && o.message?.role === 'user' });
+      head = o.id; // pi resumes at its last entry
+    }
+  }
+  if (!nodes.size) throw new Error('没有会话记录');
+  return { nodes, head, sig: fileSig(st) };
+}
+const fileSig = (st) => (st ? `${st.size}:${Math.round(st.mtimeMs)}` : '');
+
+// Claude's explicit leaf checkpoint: leafUuid = a message makes resume load that branch; null
+// withdraws it (both forms are what Claude 2.1.308 writes itself). Returns false on failure.
+function appendCheckpoint(file, sessionId, leafUuid, onError) {
+  try { fs.appendFileSync(file, JSON.stringify({ type: 'last-prompt', sessionId, leafUuid, explicit: true }) + '\n'); return true; }
+  catch (e) { onError(e); return false; }
+}
+
+// A typed prompt, not a tool result or an injected meta message.
+function isPrompt(m) {
+  if (!m || m.role !== 'user') return false;
+  if (typeof m.content === 'string') return true;
+  return Array.isArray(m.content) && m.content.some((c) => c?.type === 'text') && !m.content.some((c) => c?.type === 'tool_result');
+}
+
+function chain(tree, id) {
+  const out = [];
+  const seen = new Set();
+  while (id && !seen.has(id) && tree.nodes.has(id)) { seen.add(id); out.push(id); id = tree.nodes.get(id).parent; }
+  return out; // id, parent, ..., root
+}
+
+// null when leaf is an ancestor of (or equal to) head: a plain resume continues our conversation.
+// Otherwise the prompts written after the fork point: lost on head's branch, kept on leaf's.
+function forkInfo(tree, leaf) {
+  if (!tree.head) return null;
+  const headChain = chain(tree, tree.head);
+  if (headChain.includes(leaf)) return null;
+  const leafChain = chain(tree, leaf);
+  const onLeaf = new Set(leafChain);
+  const common = headChain.find((id) => onLeaf.has(id)) || '';
+  const prompts = (c) => (common ? c.slice(0, c.indexOf(common)) : c).filter((id) => tree.nodes.get(id).prompt).length;
+  return { lost: prompts(headChain), kept: prompts(leafChain), forkAt: common };
+}
+
+// The session-file uuid of the last assistant message this run streamed. Claude 2.1.x streams
+// one event per content block with a synthetic uuid (the real one's first 23 characters plus a
+// counter, e.g. …-000000000001) and writes only the real uuid to the file, so match on that
+// prefix. Without a usable file: the newest assistant on the file's latest branch (our run).
+// Returns { leaf, sig } (sig: the file as parsed, lets the next run skip an unchanged file).
+async function claudeLeaf(env, id, leaves = []) {
+  if (!leaves.length) return {};
+  const f = findSessionFile(env, 'claude', id);
+  if (!f) return {};
+  let t;
+  try { t = await loadTree(f, 'claude'); } catch { return {}; }
+  const assistants = [...t.nodes].filter(([, n]) => n.assistant).map(([u]) => u);
+  for (let i = leaves.length - 1; i >= 0; i--) {
+    const pre = leaves[i].slice(0, 23);
+    const hit = t.nodes.get(leaves[i])?.assistant ? leaves[i] : assistants.findLast((u) => u.startsWith(pre));
+    // sig only when no one else wrote after us (else the next run must look at the fork).
+    if (hit) return { leaf: hit, sig: forkInfo(t, hit) ? '' : t.sig };
+  }
+  return { leaf: chain(t, t.head).find((x) => t.nodes.get(x).assistant) || '', sig: t.sig };
+}
+
+// Where a plain resume would continue. For claude the nearest assistant message on that chain,
+// since --resume-session-at only accepts assistant uuids. Returns { leaf, sig }.
+async function sessionHead(env, agent, id) {
+  const f = findSessionFile(env, agent, id);
+  if (!f) return {};
+  try {
+    const t = await loadTree(f, agent);
+    if (agent !== 'claude') return { leaf: t.head, sig: t.sig };
+    return { leaf: chain(t, t.head).find((x) => t.nodes.get(x).assistant) || '', sig: t.sig };
+  } catch { return {}; }
+}
+
+// Live processes: pid -> { ppid, pgid, argv, cmd }.
+function processTable() {
+  const t = new Map();
+  if (fs.existsSync('/proc/self/stat')) {
+    let pids = [];
+    try { pids = fs.readdirSync('/proc').filter((x) => /^\d+$/.test(x)); } catch { return t; }
+    for (const p of pids) {
+      try {
+        const st = fs.readFileSync(`/proc/${p}/stat`, 'utf8');
+        const f = st.slice(st.lastIndexOf(')') + 2).split(' ');
+        const argv = fs.readFileSync(`/proc/${p}/cmdline`, 'utf8').split('\0').filter(Boolean);
+        t.set(Number(p), { ppid: Number(f[1]), pgid: Number(f[2]), argv, cmd: argv.join(' ') });
+      } catch {}
+    }
+    return t;
+  }
+  // macOS / BSD: no /proc. Arguments are only available joined.
+  let out = '';
+  try { out = execFileSync('ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 32 << 20 }); } catch { return t; }
+  for (const line of out.split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/);
+    if (m) t.set(Number(m[1]), { ppid: Number(m[2]), pgid: Number(m[3]), argv: m[4].split(/\s+/), cmd: m[4] });
+  }
+  return t;
+}
+
+// claude, claude-api (wrappers), node .../claude-code/cli.js, pi, node .../pi-coding-agent/dist/cli.js:
+// the program itself, or the script a node/bun runs.
+const agentProg = (a) => /^claude([-_.].*)?$/i.test(path.basename(a)) || path.basename(a) === 'pi'
+  || /claude-code|pi-coding-agent|\/claude\/versions\//.test(a) || a === BIN.claude || a === BIN.pi;
+const isAgentProc = (argv) => !!argv[0] && (agentProg(argv[0])
+  || (/^(node|nodejs|bun)(\.exe)?$/.test(path.basename(argv[0])) && !!argv[1] && agentProg(argv[1])));
+// The id given as a session option, not merely mentioned (e.g. inside a prompt).
+const SESSION_OPTS = new Set(['--resume', '-r', '--session-id', '--session', '--fork-session-from']);
+const namesSession = (argv, id) => argv.some((a, i) => {
+  const [k, v] = a.startsWith('--') && a.includes('=') ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [argv[i - 1], a];
+  return SESSION_OPTS.has(k) && (v === id || path.basename(v) === `${id}.jsonl` || path.basename(v).endsWith(`_${id}.jsonl`));
+});
+
+// Processes (other than `roots` and their descendants, and the process groups in `groups`) that
+// use session `id`: Claude's session registry (<config>/sessions/<pid>.json, stale entries for
+// dead or reused pids ignored) and a scan of command lines for claude/pi processes naming the id.
+function sessionUsers(id, env, roots, groups = new Set()) {
+  if (!id) return [];
+  const procs = processTable();
+  const rootSet = new Set(roots.filter((p) => Number.isInteger(p) && p > 0));
+  const mine = (pid) => {
+    for (let p = pid, i = 0; p > 1 && i < 64; i++) {
+      if (rootSet.has(p)) return true;
+      const e = procs.get(p);
+      if (!e) break;
+      if (groups.has(e.pgid)) return true;
+      p = e.ppid;
+    }
+    return false;
+  };
+  const found = new Map();
+  // Registry: which session each interactive Claude process currently has open.
+  const reg = new Map();
+  const regDir = path.join(claudeDir(env), 'sessions');
+  let files = [];
+  try { files = fs.readdirSync(regDir).filter((n) => /^\d+\.json$/.test(n)); } catch {}
+  for (const n of files) {
+    const r = readJSON(path.join(regDir, n));
+    if (!r || !Number.isInteger(r.pid) || typeof r.sessionId !== 'string') continue;
+    if (!pidAlive(r.pid, process.platform === 'linux' ? String(r.procStart || '') : '')) continue;
+    reg.set(r.pid, r.sessionId);
+    if (r.sessionId === id && !mine(r.pid)) found.set(r.pid, procs.get(r.pid)?.cmd || `claude（${r.entrypoint || r.kind || '会话登记'}）`);
+  }
+  for (const [pid, e] of procs) {
+    if (found.has(pid) || !isAgentProc(e.argv)) continue;
+    if (!namesSession(e.argv, id)) continue;
+    // A Claude window started with --resume <id> may have switched to another session since.
+    if (reg.has(pid) && reg.get(pid) !== id) continue;
+    if (mine(pid)) continue;
+    found.set(pid, e.cmd);
+  }
+  return [...found].map(([pid, cmd]) => ({ pid, cmd: shortCmd(cmd) }));
+}
+
+// "/usr/bin/node /x/claude-code/cli.js --resume <id>" -> "node cli.js --resume <id>" (fits the 60-char notice).
+const shortCmd = (cmd) => cmd.split(' ').map((w, i) => (i < 2 && w.startsWith('/') ? path.basename(w) : w)).join(' ');
+
 const LISTENER_PROTOCOL = 2;
 // Another `run` process for this agent that predates the attach protocol (no listener.json)?
 function oldListenerPid(dir, name) {
@@ -1044,10 +1389,13 @@ async function cmdAttach({ opt }) {
     }
   }
   if (lockAlive(lockFile)) die(`已经有一个终端 attach 着这个 agent（pid ${readJSON(lockFile)?.pid}）`);
+  const agentEnv = { ...process.env, ...readEnvFile(a.dir) };
+  const ext = sessionUsers(readJSON(stFile, {}).main?.id, agentEnv, [process.pid, liveNew ? lj.pid : 0]);
+  if (ext.length) die(`主会话正在被进程 ${ext.map((u) => u.pid).join(', ')} 使用（${ext[0].cmd.slice(0, 80)}）。先退出那个终端里的 ${a.config.agent}，再 attach。`);
   const lockInfo = { ...procId(process.pid), at: Date.now() };
   try { fs.writeFileSync(lockFile, JSON.stringify(lockInfo) + '\n', { flag: 'wx', mode: 0o600 }); }
   catch { die('attach.lock 已存在，另一个终端刚刚 attach 了'); }
-  let released = false, child = null;
+  let released = false, child = null, main = null;
   const report = (state, session) => api(a.config.server, a.token, 'PUT', '/me/runtime', { state, host: HOST, name: a.name, ...(session ? { session } : {}) })
     .catch((e) => console.error(`上报状态失败：${e.message}`));
   // Report idle before dropping the lock: once the lock is gone the listener may start a job and
@@ -1056,7 +1404,13 @@ async function cmdAttach({ opt }) {
   const release = async () => {
     if (released) return;
     released = true;
-    await report('idle', readJSON(stFile, {}).main?.id);
+    // Whatever the user did in the terminal is the new head of the main session.
+    const cur = readJSON(stFile, {});
+    if (child && cur.main?.id === main?.id) {
+      const head = (await sessionHead(agentEnv, a.config.agent, main.id)).leaf;
+      if (head && head !== cur.main.leaf) { cur.main = { ...cur.main, leaf: head, setAt: Date.now() }; writeJSON(stFile, cur); }
+    }
+    await report('idle', cur.main?.id);
     fs.rmSync(lockFile, { force: true });
   };
   for (const sig of ['SIGTERM', 'SIGHUP']) process.on(sig, () => {
@@ -1077,8 +1431,11 @@ async function cmdAttach({ opt }) {
   }
 
   const st = readJSON(stFile, {});
+  // A listener run may have finished meanwhile; check again for terminals that took the session.
+  const ext2 = st.main?.id ? sessionUsers(st.main.id, agentEnv, [process.pid, liveNew ? lj.pid : 0]) : [];
+  if (ext2.length) { await release(); die(`主会话正在被进程 ${ext2[0].pid} 使用（${ext2[0].cmd.slice(0, 80)}），先退出它再 attach。`); }
   if (migrateMain(st, a.config.agent)) console.log(`沿用旧会话 ${st.main.migratedFrom} 作为主会话`);
-  let main = st.main;
+  main = st.main;
   if (!main?.id || main.agent !== a.config.agent || !isDir(main.cwd)) {
     const cwd = fixedCwd(a.dir, a.config, main);
     fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });

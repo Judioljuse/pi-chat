@@ -25,6 +25,7 @@ type memberJSON struct {
 	Online      bool   `json:"online"`
 	State       string `json:"state,omitempty"`       // agent: offline / idle / running / attached
 	MainSession string `json:"mainSession,omitempty"` // agent: the listener's current main session
+	Notice      string `json:"notice,omitempty"`      // agent: listener runtime notice (external use, fork)
 	LastReadSeq int64  `json:"lastReadSeq"`
 	joinedAt    int64
 }
@@ -45,7 +46,7 @@ func (s *Server) loadGroup(q querier, gid string) (*groupRow, error) {
 
 func (s *Server) members(q querier, gid string) ([]memberJSON, error) {
 	rows, err := q.Query(`SELECT p.id,p.kind,m.nick,p.display_name,m.role,COALESCE(p.owner_id,''),COALESCE(o.display_name,''),COALESCE(p.platform,''),m.last_read_seq,m.joined_at,
-		COALESCE(p.runtime_state,''),COALESCE(p.main_session,'')
+		COALESCE(p.runtime_state,''),COALESCE(p.main_session,''),COALESCE(p.runtime_notice,'')
 		FROM members m JOIN principals p ON p.id=m.principal_id LEFT JOIN principals o ON o.id=p.owner_id
 		WHERE m.group_id=? ORDER BY m.joined_at, p.id`, gid)
 	if err != nil {
@@ -56,7 +57,7 @@ func (s *Server) members(q querier, gid string) ([]memberJSON, error) {
 	for rows.Next() {
 		var m memberJSON
 		var state string
-		if err := rows.Scan(&m.ID, &m.Kind, &m.Nick, &m.DisplayName, &m.Role, &m.OwnerID, &m.OwnerName, &m.Platform, &m.LastReadSeq, &m.joinedAt, &state, &m.MainSession); err != nil {
+		if err := rows.Scan(&m.ID, &m.Kind, &m.Nick, &m.DisplayName, &m.Role, &m.OwnerID, &m.OwnerName, &m.Platform, &m.LastReadSeq, &m.joinedAt, &state, &m.MainSession, &m.Notice); err != nil {
 			return nil, err
 		}
 		if m.Kind == "agent" {
@@ -98,6 +99,12 @@ func (s *Server) groupJSON(q querier, a *actor, gid string) (obj, error) {
 	}
 	myRole := ""
 	name := g.Name
+	for i := range ms {
+		// Only the agent's owner sees the full runtime notice.
+		if ms[i].Notice != "" && ms[i].OwnerID != a.ID {
+			ms[i].Notice = publicNotice(ms[i].Notice)
+		}
+	}
 	for _, m := range ms {
 		if m.ID == a.ID {
 			myRole = m.Role

@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/motion/dropdown-menu'
 import { Collapsible, CollapsibleContent, CollapsibleIndicator, CollapsibleTrigger } from '@/components/motion/collapsible'
-import { Alert, AlertContent, AlertDescription, AlertIcon } from '@/components/motion/alert'
+import { Alert, AlertClose, AlertContent, AlertDescription, AlertIcon } from '@/components/motion/alert'
 import { AgentStateChip } from '@/components/pichat/agent-state'
 import { AgentTag, PrincipalAvatar } from '@/components/pichat/avatar'
 import { useConfirm } from '@/components/pichat/confirm'
@@ -644,6 +644,17 @@ function Runtime({ a, state }: { a: Agent; state: ReturnType<typeof agentStateOf
   const localName = rt?.name || ''
   const attachCmd = `node ~/.pichat/pichat-listen.mjs attach --name ${localName || '<本地名>'}`
   const sessions = a.sessions ?? []
+  const notice = rt?.notice || ''
+
+  // The alert animates out first; the store update follows once the server cleared it.
+  const dismissNotice = async () => {
+    try {
+      const r = await api<{ runtime: Agent['runtime'] }>('POST', `/agents/${a.id}/dismiss-notice`, {})
+      setState((s) => ({ agents: s.agents?.map((x) => (x.id === a.id ? { ...x, runtime: r.runtime } : x)) ?? null }))
+    } catch (e) {
+      fail(e)
+    }
+  }
 
   const reset = async () => {
     const yes = await ask({
@@ -679,6 +690,16 @@ function Runtime({ a, state }: { a: Agent; state: ReturnType<typeof agentStateOf
       label="运行状态"
       hint="listener 对这个 agent 只用一个主会话：所有群、私聊和档位共用同一段上下文。在终端里 attach 时，后台唤醒会排队，退出后再处理。"
     >
+      {notice && (
+        <Alert key={`${notice}-${rt?.noticeAt ?? ''}`} variant="warning" className="p-3">
+          <AlertIcon />
+          <AlertContent className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <AlertDescription className="text-[12.5px] break-words">{notice}</AlertDescription>
+            {rt?.noticeAt ? <span className="text-[11.5px] text-muted-foreground tabular-nums">{fmtTime(rt.noticeAt)}</span> : null}
+          </AlertContent>
+          <AlertClose aria-label="知道了，清除提示" title="知道了" onClick={dismissNotice} />
+        </Alert>
+      )}
       <div className="flex flex-col divide-y divide-border rounded-control border border-border px-3">
         {kv('状态', <AgentStateChip state={state} className="text-[13px]" />)}
         {kv('主机', rt?.host || <span className="text-muted-foreground">未知</span>)}

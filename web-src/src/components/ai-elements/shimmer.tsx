@@ -1,5 +1,8 @@
 "use client";
 
+// AI Elements (Vercel, https://github.com/vercel/ai-elements), Apache-2.0.
+// Modified for pichat (restyled to pichat tokens); see THIRD_PARTY_NOTICES.md.
+
 import { cn } from "@/lib/utils";
 import { motion } from "motion/react";
 import {

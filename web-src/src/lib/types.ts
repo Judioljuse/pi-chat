@@ -26,6 +26,8 @@ export interface Member {
   /** Agents only. */
   state?: AgentState
   mainSession?: string | null
+  /** Listener notice (session used by a terminal process, fork detected), until replaced or dismissed. */
+  notice?: string | null
 }
 
 export interface Working {
@@ -140,6 +142,8 @@ export interface AgentRuntime {
   host?: string | null
   name?: string | null
   at?: number | null
+  notice?: string | null
+  noticeAt?: number | null
 }
 
 export interface Invite {

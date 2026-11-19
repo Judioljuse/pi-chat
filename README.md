@@ -1,17 +1,19 @@
 # pichat
 
+A small self-hosted group chat where people and their coding agents (Claude Code, pi) talk in the same groups.
+
 给自己和少数信任的人用的群聊：人和 AI agent（Claude Code、pi）在同一个群里说话。@ 某个 agent 时，它所在机器上的 listener 会在本机启动 `claude -p` 或 `pi -p` 处理，再把回答发回群里。
 
 - 服务端：一个 Go 二进制 `pichat`（SQLite，网页打包在二进制里），无外部依赖。
 - 网页：手机优先，hash 路由，SSE 实时更新。
 - listener：`listener/pichat-listen.mjs`，单文件、零依赖，Node ≥ 18。
 
-接口契约见 `docs/v1-spec.md`。
+接口契约见 `docs/v1-spec.md`，设计记录见 `docs/design.md`，第三方代码的许可见 `THIRD_PARTY_NOTICES.md`。
 
 ## 快速开始：Docker Compose
 
 ```sh
-git clone <本仓库> pichat && cd pichat
+git clone https://github.com/Judioljuse/pi-chat.git pichat && cd pichat
 docker compose up -d --build            # 默认只监听 127.0.0.1:8080
 docker compose logs pichat | grep redeem   # 首次启动日志里有一次性管理员注册链接（1 小时有效）
 ```
@@ -91,7 +93,7 @@ loginctl enable-linger $USER                          # Linux：退出登录后�
 
 3. 后台服务不继承 shell 的环境变量。模型网关等变量写到 `~/.pichat/agents/<名字>/env`（每行 `KEY=VALUE`，建议 `chmod 600`），每次 run 都会重新读取。
 4. 要把 agent 拉进别的群：在群设置里点“拉我的 agent 进群”。不同群可以绑定不同项目目录：`node ~/.pichat/pichat-listen.mjs bind --name cc <groupId> <目录>`（Claude 会多一个 `--add-dir`，工作目录不变）。
-5. 每个 agent 只有一个主会话：所有群、私聊和档位都续用它，上下文不会因为换群而丢。想自己在终端里接着这个会话干活：`node ~/.pichat/pichat-listen.mjs attach --name cc`。attach 期间 listener 暂停，新的 @ 排队，退出终端后自动处理。网页“我的 agent”能看到主会话 id、状态（离线/空闲/运行中/在终端中）和历史，“重置会话”会让下一次 run 从新会话开始。
+5. 每个 agent 只有一个主会话：所有群、私聊和档位都续用它，上下文不会因为换群而丢。想自己在终端里接着这个会话干活，请始终用 `node ~/.pichat/pichat-listen.mjs attach --name cc`：attach 期间 listener 暂停，新的 @ 排队，退出终端后自动处理，并以你在终端里的对话为新的起点。如果绕过 attach 直接 `claude --resume <id>`（或 `pi --session <id>`），listener 会检测到有外部进程在用主会话，群消息排队，网页上显示提示，等那个进程退出后再处理。Claude Code 的会话如果因此分叉，后台会接着自己的分支继续，终端分支先备份到 `~/.pichat/agents/<名字>/forks/`。pi 只检测并提示分叉，后台会沿用 pi 的最新分支（终端分支），不会切回；`pi -c` 或从 pi 的会话列表打开主会话也检测不到，所以 pi 更要用 attach。网页“我的 agent”能看到主会话 id、状态（离线/空闲/运行中/在终端中）和历史，“重置会话”会让下一次 run 从新会话开始。
 6. 每条 agent 消息都记录来源（后台会话 / 终端会话 + 会话 id + 主机），网页上显示在消息下方；不是主会话发的消息会标“非主会话”。
 
 更多命令（`status`、`config --max-tier`、`uninstall`、排查）见 `listener/README.md`。
@@ -148,5 +150,6 @@ docker compose cp pichat:/data/backup-20261119 ./
 ```sh
 make test     # go vet + go test
 make build
+make web      # 改了 web-src/ 之后重建 web/dist（默认 registry.npmjs.org，国内可加 NPM_REGISTRY=https://registry.npmmirror.com）
 make docker   # 构建镜像
 ```

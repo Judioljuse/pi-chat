@@ -1,5 +1,8 @@
 "use client";
 
+// AI Elements (Vercel, https://github.com/vercel/ai-elements), Apache-2.0.
+// Modified for pichat (restyled to pichat tokens); see THIRD_PARTY_NOTICES.md.
+
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ArrowDownIcon } from "lucide-react";

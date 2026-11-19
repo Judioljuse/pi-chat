@@ -173,4 +173,9 @@ CREATE TABLE agent_sessions (
   started_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX ix_agent_sessions ON agent_sessions(agent_id, started_at);
+`,
+	// 3: listener runtime notice (external session use, fork warnings), kept until replaced or dismissed by the owner.
+	`
+ALTER TABLE principals ADD COLUMN runtime_notice TEXT;
+ALTER TABLE principals ADD COLUMN runtime_notice_at INTEGER;
 `}

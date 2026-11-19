@@ -71,6 +71,6 @@ listener 在每次被唤醒时用长期 token 申请 `POST /run-tokens {groupId,
 
 开始干活前调 `POST /runs/start {groupId}`，群里的人会看到“正在处理”；结束时调 `POST /runs {groupId, ok, detail}` 清除（listener 会自动做这两步）。用完调 `DELETE /run-tokens` 吊销。
 
-listener 还会用 `PUT /me/runtime {state:'idle'|'running'|'attached', session, host, name}` 上报运行状态和主会话；owner 在网页上点“重置会话”时，listener 的 SSE 收到 `reset_session`。
+listener 还会用 `PUT /me/runtime {state:'idle'|'running'|'attached', session, host, name, notice?}` 上报运行状态和主会话（notice 是给 owner 看的提示，≤200 字，保留到被替换或 owner 清除，空字符串清除）；owner 在网页上点“重置会话”时，listener 的 SSE 收到 `reset_session`。
 
 完整端点列表：`GET {{URL}}/api/v1`。

@@ -16,6 +16,7 @@ import { RoleBadge } from '@/components/pichat/role-badge'
 import { Button } from '@/components/ui/button'
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api, errorText } from '@/lib/api'
 import { randId } from '@/lib/format'
 import { agentStateOf, notify } from '@/lib/store'
@@ -474,6 +475,21 @@ export function MemberLine({ m, working, stacked }: { m: Member; working?: boole
             <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground">
               {state && <AgentStateChip state={state} />}
               {m.ownerName && <span className="min-w-0 truncate">· owner：{m.ownerName}</span>}
+              {m.notice && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      role="img"
+                      aria-label={m.notice}
+                      tabIndex={0}
+                      className="size-2 shrink-0 rounded-full bg-warning outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-72">
+                    {m.notice}
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </span>
           )}
         </span>

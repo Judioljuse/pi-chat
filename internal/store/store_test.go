@@ -49,6 +49,10 @@ func TestMigrateFromV1(t *testing.T) {
 	if err := db.R.QueryRow(`SELECT runtime_state,main_session FROM principals WHERE id='a_c'`).Scan(&state, &sess); err != nil || state.Valid || sess.Valid {
 		t.Fatalf("principal: %v %v %v", state, sess, err)
 	}
+	var notice sql.NullString
+	if err := db.R.QueryRow(`SELECT runtime_notice FROM principals WHERE id='a_c'`).Scan(&notice); err != nil || notice.Valid {
+		t.Fatalf("notice: %v %v", notice, err)
+	}
 	var n int
 	db.R.QueryRow(`SELECT COUNT(*) FROM tokens WHERE run_session IS NULL`).Scan(&n)
 	if n != 1 {

@@ -151,6 +151,9 @@ export interface AgentEvent {
   session?: string | null
   host?: string | null
   name?: string | null
+  /** Sent on every event; null when there is no notice. Absent from older servers. */
+  notice?: string | null
+  noticeAt?: number | null
 }
 
 /** Apply a live 'agent' SSE event to every group member list and to my agents page. */
@@ -166,7 +169,13 @@ export function applyAgentEvent(e: AgentEvent) {
         ...g,
         members: g.members.map((m) =>
           m.id === e.agentId
-            ? { ...m, state: e.state, online: e.state !== 'offline', mainSession: e.session ?? m.mainSession }
+            ? {
+                ...m,
+                state: e.state,
+                online: e.state !== 'offline',
+                mainSession: e.session ?? m.mainSession,
+                notice: e.notice !== undefined ? e.notice : m.notice,
+              }
             : m,
         ),
       }
@@ -184,6 +193,7 @@ export function applyAgentEvent(e: AgentEvent) {
                 host: e.host ?? a.runtime?.host,
                 name: e.name ?? a.runtime?.name,
                 at: Date.now(),
+                ...(e.notice !== undefined && { notice: e.notice, noticeAt: e.noticeAt }),
               },
             }
           : a,

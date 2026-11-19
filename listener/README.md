@@ -42,7 +42,33 @@ Linux 上希望退出登录后还在运行：`loginctl enable-linger $USER`。
 - 网页“重置会话”：listener 收到 `reset_session`，下一次 run 用新会话。
 - `config --name cc --session-scope group` 回到旧行为（每个群、每类档位一个会话，24 小时或 30 次 run 换新，同群串行、全局 2 个并行）。
 
-listener 通过 `PUT /me/runtime` 上报状态（空闲 / 运行中 / 在终端中）、主会话 id、主机名和本机名字，网页上能看到。
+listener 通过 `PUT /me/runtime` 上报状态（空闲 / 运行中 / 在终端中）、主会话 id、主机名和本机名字，网页上能看到；需要你注意的情况（下面两节）还会带一条提示，网页上显示为黄色提醒，直到被新提示替换或你点“知道了”。
+
+### 有人直接打开了主会话
+
+想在终端里接着主会话干活，请始终用 `attach`（下一节）。如果绕过它直接 `claude --resume <主会话>`、在 Claude 里 `/resume` 到它，或用 `pi --session <主会话>` 打开它，listener 在每次 run 前、启动 agent 的前一刻（以及排队期间每 5 秒）会检测到：
+
+- Claude 的会话登记 `~/.claude/sessions/<pid>.json`（`CLAUDE_CONFIG_DIR` 可改）里 `sessionId` 是主会话、且进程还活着（Linux 还核对 `procStart`，pid 被复用的旧登记会被忽略）；
+- 或命令行里用 `--resume` / `-r` / `--session-id` / `--session` 指定了主会话（id 或会话文件）的 claude / pi 进程（Linux 读 `/proc/*/cmdline`，macOS 用 `ps`）。只是在 prompt 里提到 id 的进程不算。
+
+pi 没有会话登记，只能从命令行认出来：`pi -c` 或在 pi 的会话选择器里打开主会话，listener 看不到，会和它同时用会话。所以 pi 更要始终用 attach。
+
+listener 自己启动的 run（按进程组）和 attach 及其子进程不算。检测到时不开始 run，消息排队，上报“在终端中”和提示“主会话正在被终端进程 <pid> 使用（…），群消息已排队”；那个进程退出后自动处理排队的消息并清掉提示。这时 `attach` 也会拒绝，并告诉你是哪个 pid。
+
+### 会话分叉
+
+Claude 的会话文件（`~/.claude/projects/<目录>/<id>.jsonl`）是一棵只追加的树（每行 `uuid` / `parentUuid`）。终端窗口如果在较早时加载了历史、后来才继续说话，它的新消息会从那个旧位置长出一个分支；之后普通的 `--resume` 会接着**最近写入的分支**，后台在这期间的对话就从上下文里消失了。
+
+- 每次后台 run 结束，listener 把这次 run 最后一条 assistant 消息在会话文件里的 `uuid` 记为 `main.leaf`（stream-json 里多个内容块的事件 uuid 是合成的，如 `…-000000000001`，文件里没有，listener 按前缀对回文件里的那一行）；attach 退出时把会话文件的最新位置记为 `main.leaf`（你在终端里做的事就是新的起点）。
+- 下一次 run 前读会话文件：`main.leaf` 在最新分支上（是它或它的祖先）就普通 `--resume`；不在，说明分叉了，先把会话文件备份到 `~/.pichat/agents/<名字>/forks/<id>-<时间>.jsonl`，再在会话文件末尾追加一行检查点 `{type:'last-prompt', leafUuid:<main.leaf>, explicit:true}`（Claude 自己回退时写的也是这种行），然后用 `--resume <id> --resume-session-at <main.leaf>` 接着后台自己的分支，写日志，并提示“检测到会话分叉：终端分支的 N 轮对话未被后台沿用（已备份）”。终端分支上没有你输入的 prompt（例如窗口只写了系统行）时同样切回后台分支，但只写日志、不提示。
+- 已验证（Claude Code 2.1.308）：Claude 只加载以最新位置结尾的那条链，单用 `--resume-session-at` 指向另一分支上的消息会报 “No message found with message.uuid of …”，所以必须先写检查点。`--resume-session-at` 不删除也不改写已有的行，只是新消息挂在指定的位置下面，会话 id 不变；之后普通 `--resume` 会接着这个新分支。终端分支的内容仍在文件里（以及备份里），只是不在后台的上下文中。
+- 找不到或解析不了会话文件、或者文件里没有记录的位置：普通 `--resume`，写一条警告。`--resume-session-at` 被 Claude 拒绝时，先追加一行撤回检查点 `{type:'last-prompt', leafUuid:null, explicit:true}`（Claude 自己撤回时写的也是这种行），再用普通 `--resume` 重试一次，接着最新分支。
+- 会话文件逐行流式读取，不会一次读进内存；文件大小和修改时间和上次 run 结束时一样就跳过解析。
+- pi 的会话（`~/.pi/agent/sessions/<目录>/<时间>_<id>.jsonl`，`PI_CODING_AGENT_DIR` 可改）也是树（`id` / `parentId`），打开时总是接着文件最后一条。listener 能检测分叉并提示“后台的 N 轮对话不在 pi 当前分支上”，但 pi 命令行没有从指定位置继续的参数，所以只提示、不修复，本次沿用 pi 的最新分支。
+
+更新 listener 之前就已经分叉的会话：`node scripts/repair-fork.mjs --name <名字> --dry-run` 看后台分支的位置，确认后去掉 `--dry-run` 写入 `main.leaf`（会先备份 `state.json`；listener 正在 run 或终端正在 attach 时拒绝写入）。
+
+网页上的完整提示（含 pid 和命令行）只给 agent 的 owner 看；群里其他人只看到“主会话正在被终端使用，群消息已排队”或“检测到会话分叉”。
 
 ## 在终端里接管：attach
 
@@ -90,7 +116,7 @@ node ~/.pichat/pichat-listen.mjs config --name cc --max-tier project --model son
 - `--max-tier restricted|project|full`：本机上限，服务端给的档位超过它就降级。默认 `full`（不额外限制）。
 - `--agent claude|pi`、`--model <m>`（`-` 清空）、`--dir <d>`（`-` 清空）、`--session-scope agent|group`。
 
-状态目录 `~/.pichat/agents/<名字>/`（0700）：`config.json`、`token`（0600）、`state.json`（主会话 `main`、旧模式的 `sessions`、每日计数、重试）、`attach.lock` / `running.json`（attach 时）、`runs/_main/`（没有 `--dir` 时的主会话目录）、`runs/<groupId>/`（旧模式受限档目录）、`listen.log`。
+状态目录 `~/.pichat/agents/<名字>/`（0700）：`config.json`、`token`（0600）、`state.json`（主会话 `main`、旧模式的 `sessions`、每日计数、重试）、`attach.lock` / `running.json`（attach 时）、`runs/_main/`（没有 `--dir` 时的主会话目录）、`runs/<groupId>/`（旧模式受限档目录）、`forks/`（分叉时会话文件的备份）、`listen.log`。
 
 环境变量：`PICHAT_HOME` 改状态根目录（默认 `~/.pichat`），`PICHAT_CLAUDE_BIN` / `PICHAT_PI_BIN` 指定 agent 可执行文件（测试用）。
 
@@ -133,4 +159,5 @@ node ~/.pichat/pichat-listen.mjs api GET /groups
 - run 失败、报认证或模型错误：服务进程里缺环境变量，写进 env 文件。先在终端里手动跑 `claude -p` / `pi -p` 确认 CLI 本身正常。
 - agent 不回话但 run 成功：它可能输出了 `[SILENT]`；网页 agent 卡片的"最近 run"里能看到结果。
 - 会话坏了：在网页上点“重置会话”，或删掉 `state.json` 里的 `main`（旧模式删对应的 `sessions` 项），下次会新建会话。
-- 一直“在终端中”：`attach` 进程还活着就会挡住 listener；关掉那个终端即可，进程不在的锁会被自动忽略。
+- 一直“在终端中”：`attach` 进程还活着就会挡住 listener；关掉那个终端即可，进程不在的锁会被自动忽略。提示里写着“正在被终端进程 <pid> 使用”时，是有窗口直接打开了主会话：退出那个 claude / pi（`ps -p <pid> -o args` 看是哪个）。
+- 后台回答像是忘了你在终端里说过的话：看日志里有没有“检测到会话分叉”，终端分支在 `forks/` 的备份里；以后用 attach 进入主会话就不会分叉。

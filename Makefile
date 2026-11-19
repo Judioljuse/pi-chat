@@ -9,8 +9,10 @@ DATA ?= ./data
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/pichat ./cmd/pichat
 
+# NPM_REGISTRY overrides web-src/.npmrc and the hosts recorded in package-lock.json.
+NPM_REGISTRY ?= https://registry.npmjs.org
 web:
-	cd web-src && npm ci && npm run build
+	cd web-src && npm ci --registry=$(NPM_REGISTRY) --replace-registry-host=always && npm run build
 
 test:
 	go vet ./...

@@ -45,9 +45,9 @@ func TestMessageVia(t *testing.T) {
 	}
 	// Direct post with the long-lived token: headers are validated.
 	m = cc.doH("POST", "/groups/"+gid+"/messages", map[string]any{"text": "direct", "ignoreNew": true},
-		map[string]string{"X-Pichat-Session": "f6a0ac5e-d2e9-4fd5-a3c5-9a301f0c7ddf", "X-Pichat-Host": "box<1>"})["message"].(map[string]any)
+		map[string]string{"X-Pichat-Session": "00000000-0000-4000-8000-000000000001", "X-Pichat-Host": "box<1>"})["message"].(map[string]any)
 	via := m["via"].(map[string]any)
-	if via["kind"] != "direct" || via["session"] != "f6a0ac5e-d2e9-4fd5-a3c5-9a301f0c7ddf" || via["host"] != "box1" {
+	if via["kind"] != "direct" || via["session"] != "00000000-0000-4000-8000-000000000001" || via["host"] != "box1" {
 		t.Fatalf("direct via: %v", via)
 	}
 	m = cc.doH("POST", "/groups/"+gid+"/messages", map[string]any{"text": "bad", "ignoreNew": true},
@@ -270,5 +270,94 @@ func TestAgentEventAudience(t *testing.T) {
 	alice.ok("POST", "/agents/"+cc.id+"/reset-session", nil)
 	if typ, _ := readEvent(t, ab); typ != "reset_session" {
 		t.Fatalf("agent stream: %s", typ)
+	}
+}
+
+func TestRuntimeNotice(t *testing.T) {
+	e := newEnv(t)
+	alice := e.human("alice")
+	bob := e.human("bob")
+	gid := alice.group("g", bob)
+	cc := e.agent(alice, "CC", gid)
+	hb, closeB := openSSE(t, bob, "")
+	defer closeB()
+	readEvent(t, hb)
+	ab, closeA := openSSE(t, cc, "")
+	defer closeA()
+	readEvent(t, ab)
+	if typ, _ := readEvent(t, hb); typ != "agent" {
+		t.Fatalf("connect event: %s", typ)
+	}
+
+	long := strings.Repeat("长", 250)
+	ha, closeO := openSSE(t, alice, "")
+	defer closeO()
+	readEvent(t, ha)
+	cc.ok("PUT", "/me/runtime", map[string]any{"state": "attached", "session": "s1", "notice": "主会话正在被\n‮终端进程 42 使用（claude --settings /home/x/secret.json） " + long})
+	// The owner gets the full notice; other members only a generic text (no pid or command line).
+	typ, data := readEvent(t, ha)
+	if typ != "agent" || !strings.Contains(data, `"notice":"主会话正在被 终端进程 42 使用（claude --settings /home/x/secret.json） 长`) || !strings.Contains(data, `"noticeAt":`) {
+		t.Fatalf("owner notice event: %s %s", typ, data)
+	}
+	typ, data = readEvent(t, hb)
+	if typ != "agent" || !strings.Contains(data, `"notice":"主会话正在被终端使用，群消息已排队"`) || strings.Contains(data, "secret") {
+		t.Fatalf("member notice event: %s %s", typ, data)
+	}
+	rt := alice.ok("GET", "/agents", nil)["agents"].([]any)[0].(map[string]any)["runtime"].(map[string]any)
+	n, _ := rt["notice"].(string)
+	if len([]rune(n)) != 200 || strings.ContainsAny(n, "\n‮") || rt["noticeAt"] == nil {
+		t.Fatalf("stored notice: %q %v", n, rt["noticeAt"])
+	}
+	at := rt["noticeAt"]
+
+	// A later report without notice keeps it; group members see the generic text, the owner all of it.
+	cc.ok("PUT", "/me/runtime", map[string]any{"state": "idle"})
+	readEvent(t, hb)
+	readEvent(t, ha)
+	for _, x := range bob.ok("GET", "/groups/"+gid, nil)["group"].(map[string]any)["members"].([]any) {
+		m := x.(map[string]any)
+		if m["id"] == cc.id && m["notice"] != "主会话正在被终端使用，群消息已排队" {
+			t.Fatalf("member notice: %v", m)
+		}
+		if m["kind"] == "human" && m["notice"] != nil {
+			t.Fatalf("human notice: %v", m)
+		}
+	}
+	for _, x := range alice.ok("GET", "/groups/"+gid, nil)["group"].(map[string]any)["members"].([]any) {
+		if m := x.(map[string]any); m["id"] == cc.id && m["notice"] != n {
+			t.Fatalf("owner member notice: %v", m)
+		}
+	}
+	rt = alice.ok("GET", "/agents", nil)["agents"].([]any)[0].(map[string]any)["runtime"].(map[string]any)
+	if rt["notice"] != n || rt["noticeAt"] != at {
+		t.Fatalf("kept notice: %v", rt)
+	}
+
+	// Replaced by a new notice.
+	cc.ok("PUT", "/me/runtime", map[string]any{"state": "idle", "notice": "检测到会话分叉"})
+	if _, data := readEvent(t, hb); !strings.Contains(data, `"notice":"检测到会话分叉"`) {
+		t.Fatalf("replaced: %s", data)
+	}
+
+	// Only the owner can dismiss.
+	if r := bob.do("POST", "/agents/"+cc.id+"/dismiss-notice", nil); r.status != 404 {
+		t.Fatalf("non-owner dismiss: %d", r.status)
+	}
+	if r := cc.do("POST", "/agents/"+cc.id+"/dismiss-notice", nil); r.status != 403 {
+		t.Fatalf("agent dismiss: %d", r.status)
+	}
+	res := alice.ok("POST", "/agents/"+cc.id+"/dismiss-notice", nil)["runtime"].(map[string]any)
+	if res["notice"] != nil || res["noticeAt"] != nil {
+		t.Fatalf("dismissed: %v", res)
+	}
+	if _, data := readEvent(t, hb); !strings.Contains(data, `"notice":null`) {
+		t.Fatalf("dismiss event: %s", data)
+	}
+	// An empty notice from the listener also clears it.
+	cc.ok("PUT", "/me/runtime", map[string]any{"state": "idle", "notice": "x"})
+	readEvent(t, hb)
+	cc.ok("PUT", "/me/runtime", map[string]any{"state": "idle", "notice": " \n "})
+	if _, data := readEvent(t, hb); !strings.Contains(data, `"notice":null`) {
+		t.Fatalf("cleared: %s", data)
 	}
 }

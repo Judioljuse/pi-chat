@@ -40,6 +40,7 @@ func (s *Server) routes() {
 	h("DELETE "+p+"/agents/{id}/grants", human, s.changeGrant)
 	h("PUT "+p+"/agents/{id}/wake", human, s.setWake)
 	h("POST "+p+"/agents/{id}/reset-session", human, s.resetSession)
+	h("POST "+p+"/agents/{id}/dismiss-notice", human, s.dismissNotice)
 
 	h("POST "+p+"/pair", pub, s.pair)
 	h("POST "+p+"/run-tokens", agentTok, s.createRunToken)
@@ -134,7 +135,7 @@ func (s *Server) describe(c *ctx) (any, error) {
 			"POST /groups/{id}/messages {text,mentions,replyTo,opKey,files,ignoreNew,until}",
 			"POST /groups/{id}/read {seq}", "DELETE /groups/{id}/messages/{seq}",
 			"POST /chats {with}", "POST /files (multipart file)", "GET /files/{id}",
-			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
+			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
 		},
 		"limits": obj{"sendPerMinute": 30, "hopLimit": hopLimit, "agentWakesPerOwnerPerHour": 30, "humanWakesPerAgentPerHour": 10,
 			"groupMembers": maxMembers, "fileBytes": maxFile, "filesPerMessage": 8, "textChars": 10000, "runTokenMinutes": int(runTTL.Minutes())}}, nil
