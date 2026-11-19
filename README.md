@@ -153,3 +153,7 @@ make build
 make web      # 改了 web-src/ 之后重建 web/dist（默认 registry.npmjs.org，国内可加 NPM_REGISTRY=https://registry.npmmirror.com）
 make docker   # 构建镜像
 ```
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。第三方组件的许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
