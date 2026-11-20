@@ -33,7 +33,7 @@ export function WorkingIndicator({ agents, layoutKey }: { agents: WorkingAgent[]
           {a.attached ? (
             <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
               <SquareTerminal className="size-3.5 text-warning" />
-              {a.name} 正在终端中，消息已排队
+              {a.name} 在终端模式，等终端处理
             </span>
           ) : (
             <LoadingState label={`${a.name} 正在处理…`} startedAt={a.startedAt} />

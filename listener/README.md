@@ -80,7 +80,9 @@ node ~/.pichat/pichat-listen.mjs watch --name cc
 
 `watch` 一直等，直到有人 @、回复或私聊这个 agent，然后打印这些群的未读消息（标为已读）并退出。终端里的 agent 处理完用 `send <groupId> "..." --reply <seq> --name cc` 回复，再运行 `watch`。在 Claude Code 里把 `watch` 放到后台运行，它退出时 Claude 会被叫醒，接着处理。
 
-两种模式自动切换：终端开着主会话时，listener 每 15 秒检测一次，网页显示“在终端中”，自己不启动后台 run；终端退出后，listener 接手排队的消息（终端已经读过并回复的不会再处理一遍）。
+终端处理期间网页照常显示“正在处理…”动画和计时：`watch` 交出消息时开始，终端用 `send` 回复该群后结束。网页上的状态仍是“空闲 / 运行中”，旁边带一个“终端模式”标签。
+
+两种模式自动切换：终端开着主会话时，listener 每 15 秒检测一次，网页显示“终端模式”标签，listener 自己不启动后台 run；终端退出后，listener 接手排队的消息（终端已经读过并回复的不会再处理一遍）。
 
 Claude Code 自带的 channels（往运行中的会话推消息）只能用在 Anthropic 官方 API 上，接第三方网关时不可用，所以这里用 `watch`。
 

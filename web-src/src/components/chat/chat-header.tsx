@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { ChevronLeft, Settings, UserPlus, Users } from 'lucide-react'
 import { AvatarGroup } from '@/components/motion/avatar-group'
 import { PrincipalAvatar } from '@/components/pichat/avatar'
-import { AGENT_STATE } from '@/components/pichat/agent-state'
+import { agentStateText } from '@/components/pichat/agent-state'
 import { InviteMembers } from '@/components/pichat/invite-members'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { agentStateOf } from '@/lib/store'
+import { agentStateOf, terminalModeOf } from '@/lib/store'
 import type { Group, GroupSummary } from '@/lib/types'
 import { memberName } from './util'
 
@@ -33,7 +33,7 @@ export function ChatHeader({
     // The avatar tooltip shows the name; agents also show their listener state.
     .map((m) => ({
       id: m.id,
-      name: m.kind === 'agent' ? `${memberName(m)} · ${AGENT_STATE[agentStateOf(m, workingIds?.has(m.id))]}` : memberName(m),
+      name: m.kind === 'agent' ? `${memberName(m)} · ${agentStateText(agentStateOf(m, workingIds?.has(m.id)), terminalModeOf(m))}` : memberName(m),
     }))
 
   return (

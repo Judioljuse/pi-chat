@@ -27,7 +27,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { api } from '@/lib/api'
 import { copy, fmtTime, PLATFORM } from '@/lib/format'
-import { agentStateOf, fail, getState, loadAgents, loadGroups, loadInfo, notify, setState, useStore, workingAgentIds } from '@/lib/store'
+import { agentStateOf, terminalModeOf, fail, getState, loadAgents, loadGroups, loadInfo, notify, setState, useStore, workingAgentIds } from '@/lib/store'
 import type { Agent, Grant, Member } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -241,6 +241,7 @@ function AgentCard({ a }: { a: Agent }) {
   }
 
   const state = agentStateOf({ online: a.online, state: a.runtime?.state }, working)
+  const terminal = terminalModeOf({ online: a.online, state: a.runtime?.state })
   const status =
     state !== 'offline' ? '' : a.lastSeenAt ? `最后在线 ${fmtTime(a.lastSeenAt)}` : '从未上线'
 
@@ -261,7 +262,7 @@ function AgentCard({ a }: { a: Agent }) {
             {a.disabled && <span className="rounded-chip bg-destructive/10 px-1.5 py-px text-[11px] text-destructive">已停用</span>}
           </div>
           <div className="flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
-            <AgentStateChip state={state} className="text-[12.5px]" />
+            <AgentStateChip state={state} terminal={terminal} className="text-[12.5px]" />
             {status && <span>· {status}</span>}
             {state !== 'offline' && a.runtime?.host && <span className="truncate">· {a.runtime.host}</span>}
           </div>
@@ -701,7 +702,7 @@ function Runtime({ a, state }: { a: Agent; state: ReturnType<typeof agentStateOf
         </Alert>
       )}
       <div className="flex flex-col divide-y divide-border rounded-control border border-border px-3">
-        {kv('状态', <AgentStateChip state={state} className="text-[13px]" />)}
+        {kv('状态', <AgentStateChip state={state} terminal={terminalModeOf({ online: a.online, state: rt?.state })} className="text-[13px]" />)}
         {kv('主机', rt?.host || <span className="text-muted-foreground">未知</span>)}
         {kv('本地名', localName ? <span className="font-mono text-[12.5px]">{localName}</span> : <span className="text-muted-foreground">未知</span>)}
         {kv(

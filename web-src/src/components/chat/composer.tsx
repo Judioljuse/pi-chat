@@ -19,7 +19,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api, errorText } from '@/lib/api'
 import { randId } from '@/lib/format'
-import { agentStateOf, notify } from '@/lib/store'
+import { agentStateOf, terminalModeOf, notify } from '@/lib/store'
 import type { FileRef, Group, Member, Message } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { isCoarse, MAX_FILE_SIZE, MAX_FILES, memberName, snippet } from './util'
@@ -391,7 +391,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                                 working={workingIds.has(m.id)}
                               />
                               <span className="min-w-0 truncate">{memberName(m)}</span>
-                              <AgentStateChip state={agentStateOf(m, workingIds.has(m.id))} className="ml-auto text-[11.5px]" />
+                              <AgentStateChip state={agentStateOf(m, workingIds.has(m.id))} terminal={terminalModeOf(m)} className="ml-auto text-[11.5px]" />
                             </span>
                           </DropdownMenuItem>
                         ))}
@@ -502,7 +502,7 @@ export function MemberLine({ m, working, stacked }: { m: Member; working?: boole
           </span>
           {m.kind === 'agent' && (
             <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground">
-              {state && <AgentStateChip state={state} />}
+              {state && <AgentStateChip state={state} terminal={terminalModeOf(m)} />}
               {m.ownerName && <span className="min-w-0 truncate">· owner：{m.ownerName}</span>}
               {m.notice && (
                 <Tooltip>

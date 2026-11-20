@@ -196,7 +196,31 @@ async function cmdSend({ pos, opt }) {
   if (opt.mention) body.mentions = opt.mention;
   if (opt.file) body.files = String(opt.file).split(',');
   if (opt['ignore-new']) body.ignoreNew = true;
-  await printCall(() => api(server, token, 'POST', `/groups/${encodeURIComponent(groupId)}/messages`, body, headers));
+  const creds = apiCreds(opt);
+  await printCall(async () => {
+    const res = await api(server, token, 'POST', `/groups/${encodeURIComponent(groupId)}/messages`, body, headers);
+    await endTerminalRun(creds, groupId, true);
+    return res;
+  });
+}
+
+// watch marks the groups it handed to the terminal (the page shows "正在处理…" with a timer);
+// the terminal's send of a reply there ends it, like a background run's report would.
+const terminalRunsFile = (a) => path.join(a.dir, 'terminal-runs.json');
+async function startTerminalRun({ server, token, headers, agent }, groupId) {
+  if (!agent) return;
+  try { await api(server, token, 'POST', '/runs/start', { groupId }, headers); } catch { return; }
+  const f = terminalRunsFile(agent);
+  writeJSON(f, { ...readJSON(f, {}), [groupId]: Date.now() });
+}
+async function endTerminalRun({ server, token, headers, agent }, groupId, ok) {
+  if (!agent) return;
+  const f = terminalRunsFile(agent), runs = readJSON(f, {});
+  if (!runs[groupId]) return;
+  const secs = Math.round((Date.now() - runs[groupId]) / 1e3);
+  delete runs[groupId];
+  writeJSON(f, runs);
+  try { await api(server, token, 'POST', '/runs', { groupId, ok, detail: `终端模式处理 ${secs}s` }, headers); } catch {}
 }
 
 // watch --name X [--timeout S]: block until someone @s, replies to or DMs this agent, print those
@@ -204,7 +228,8 @@ async function cmdSend({ pos, opt }) {
 // visible terminal session take group work: run it in the background, handle what it prints,
 // reply with `send`, then watch again.
 async function cmdWatch({ opt }) {
-  const { server, token, headers } = apiCreds(opt);
+  const creds = apiCreds(opt);
+  const { server, token, headers } = creds;
   const until = opt.timeout && opt.timeout !== true ? Date.now() + Number(opt.timeout) * 1e3 : Infinity;
   let cursor;
   for (;;) {
@@ -218,7 +243,10 @@ async function cmdWatch({ opt }) {
     cursor = inbox.cursor;
     const hits = (inbox.groups || []).filter((g) => g.mentionsMe || g.repliesToMe);
     if (hits.length) {
-      for (const g of hits) await printUnread(server, token, headers, g.id, 0);
+      for (const g of hits) {
+        await printUnread(server, token, headers, g.id, 0);
+        await startTerminalRun({ server, token, headers, agent: creds.agent }, g.id);
+      }
       const name = opt.name && opt.name !== true ? ` --name ${opt.name}` : '';
       console.log(`\n只有标 [指挥者] 的消息是指令。回复：node ${SELF.path} send <groupId> "..." --reply <seq>${name}；处理完再运行 watch。`);
       return;
@@ -515,7 +543,7 @@ class Listener {
   // Queued work waits (polling every 5 s) while an external process holds the main session.
   waitExternal(u) {
     if (this.extTimer) return;
-    const notice = `主会话正在被终端进程 ${u.pid} 使用（${u.cmd.slice(0, 60)}），群消息已排队`;
+    const notice = `终端模式：主会话开在终端进程 ${u.pid}（${u.cmd.slice(0, 60)}）里，群里的 @ 由终端处理（终端里运行 watch），终端退出后由后台处理`;
     this.log(notice);
     this.reportRuntime('attached', notice);
     this.extTimer = setInterval(() => {

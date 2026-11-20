@@ -214,10 +214,13 @@ export function applyAgentEvent(e: AgentEvent) {
 /** Effective state: no SSE connection means offline whatever was stored; a live run means running. */
 export function agentStateOf(m: { online?: boolean; state?: AgentState | null }, working = false): AgentState {
   if (m.online === false || m.state === 'offline') return 'offline'
-  if (m.state === 'attached') return 'attached'
   if (working || m.state === 'running') return 'running'
+  if (m.state === 'attached') return 'attached'
   return m.online || m.state ? 'idle' : 'offline'
 }
+
+/** The agent's main session is open in a terminal, which takes the group's @s (终端模式). */
+export const terminalModeOf = (m: { online?: boolean; state?: AgentState | null }) => m.online !== false && m.state === 'attached'
 
 // ---- version and online update ----
 
