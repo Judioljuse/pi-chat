@@ -199,30 +199,60 @@ async function cmdSend({ pos, opt }) {
   await printCall(() => api(server, token, 'POST', `/groups/${encodeURIComponent(groupId)}/messages`, body, headers));
 }
 
+// watch --name X [--timeout S]: block until someone @s, replies to or DMs this agent, print those
+// groups' unread messages (marked read, so the listener won't run them again) and exit. Lets a
+// visible terminal session take group work: run it in the background, handle what it prints,
+// reply with `send`, then watch again.
+async function cmdWatch({ opt }) {
+  const { server, token, headers } = apiCreds(opt);
+  const until = opt.timeout && opt.timeout !== true ? Date.now() + Number(opt.timeout) * 1e3 : Infinity;
+  let cursor;
+  for (;;) {
+    let inbox;
+    try { inbox = await api(server, token, 'GET', `/inbox${cursor ? `?since=${cursor}&wait=25` : ''}`, undefined, headers); }
+    catch (e) {
+      if (e.status === 401 || e.status === 403) die(e.message);
+      await new Promise((r) => setTimeout(r, 5e3));
+      continue;
+    }
+    cursor = inbox.cursor;
+    const hits = (inbox.groups || []).filter((g) => g.mentionsMe || g.repliesToMe);
+    if (hits.length) {
+      for (const g of hits) await printUnread(server, token, headers, g.id, 0);
+      const name = opt.name && opt.name !== true ? ` --name ${opt.name}` : '';
+      console.log(`\n只有标 [指挥者] 的消息是指令。回复：node ${SELF.path} send <groupId> "..." --reply <seq>${name}；处理完再运行 watch。`);
+      return;
+    }
+    if (Date.now() > until) { console.log('（超时，没有新的 @）'); return; }
+  }
+}
+
+async function printUnread(server, token, headers, groupId, limit) {
+  const g = encodeURIComponent(groupId);
+  const [grp, res] = await Promise.all([
+    api(server, token, 'GET', `/groups/${g}`, undefined, headers),
+    api(server, token, 'GET', `/groups/${g}/messages${limit ? `?before=9007199254740991&limit=${limit}` : ''}`, undefined, headers),
+  ]);
+  const group = grp.group;
+  console.log(`${group.kind === 'dm' ? '私聊' : '群'}「${group.name}」（${group.id}），成员：${memberList(group, '')}`);
+  const msgs = res.messages || [];
+  if (!msgs.length) console.log('（没有消息）');
+  let sep = false;
+  for (const m of msgs) {
+    if (!limit && m.new && !sep) { sep = true; console.log('---- 以下是新消息 ----'); }
+    console.log(fmtMessage(m, ''));
+  }
+  if (res.skipped) console.log(`（省略了 ${res.skipped} 条较早的新消息）`);
+  if (!limit && !sep) console.log('（没有未读消息；看最近的消息用 --limit N）');
+}
+
 // read <groupId> [--limit N]: unread messages (marks them read), or the last N without touching read state.
 async function cmdRead({ pos, opt }) {
   const groupId = pos[1];
   if (!groupId) die('用法: read <groupId> [--limit N]');
   const { server, token, headers } = apiCreds(opt);
-  const g = encodeURIComponent(groupId);
-  try {
-    const limit = opt.limit && opt.limit !== true ? Math.min(100, Math.max(1, Number(opt.limit) || 20)) : 0;
-    const [grp, res] = await Promise.all([
-      api(server, token, 'GET', `/groups/${g}`, undefined, headers),
-      api(server, token, 'GET', `/groups/${g}/messages${limit ? `?before=9007199254740991&limit=${limit}` : ''}`, undefined, headers),
-    ]);
-    const group = grp.group;
-    console.log(`${group.kind === 'dm' ? '私聊' : '群'}「${group.name}」（${group.id}），成员：${memberList(group, '')}`);
-    const msgs = res.messages || [];
-    if (!msgs.length) console.log('（没有消息）');
-    let sep = false;
-    for (const m of msgs) {
-      if (!limit && m.new && !sep) { sep = true; console.log('---- 以下是新消息 ----'); }
-      console.log(fmtMessage(m, ''));
-    }
-    if (res.skipped) console.log(`（省略了 ${res.skipped} 条较早的新消息）`);
-    if (!limit && !sep) console.log('（没有未读消息；看最近的消息用 --limit N）');
-  } catch (e) { die(e.message); }
+  const limit = opt.limit && opt.limit !== true ? Math.min(100, Math.max(1, Number(opt.limit) || 20)) : 0;
+  try { await printUnread(server, token, headers, groupId, limit); } catch (e) { die(e.message); }
 }
 
 async function cmdInbox({ opt }) {
@@ -634,6 +664,12 @@ class Listener {
     writeJSON(path.join(this.dir, 'listener.json'), { ...procId(process.pid), protocol: LISTENER_PROTOCOL, startedAt: Date.now() });
     for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => this.shutdown(`收到 ${sig}`, 0));
     setInterval(() => this.pollInbox('定时'), INBOX_EVERY).unref();
+    // A terminal holding the main session shows as 在终端中 right away, not only when a job is queued.
+    setInterval(() => {
+      if (this.active || this.extTimer || this.stopping) return;
+      const ext = this.externalUsers();
+      if (ext.length) this.waitExternal(ext[0]);
+    }, 15e3).unref();
     let backoff = 1;
     for (;;) {
       const ok = await this.connect().catch((e) => { this.log('SSE 错误：', e.message); return false; });
@@ -1777,6 +1813,7 @@ const HELP = `pichat listener
   send <groupId> "text" [--reply N] [--mention X] [--raw]  用 $PICHAT_TOKEN 发消息（--raw 不整理 @昵称）
   attach --name <名字>               在终端里接管 agent 的主会话（listener 暂停并排队新消息）
   read <groupId> [--limit N]         读未读消息（标为已读），--limit 看最近 N 条
+  watch --name <名字> [--timeout S]  等到有人 @ / 回复 / 私聊这个 agent，打印这些消息后退出（终端模式用）
   inbox                              列出有未读消息的群
   （api/send/read/inbox 的 token：$PICHAT_TOKEN，否则 --name 或 $PICHAT_NAME）
 
@@ -1784,7 +1821,7 @@ const HELP = `pichat listener
 
 const argv = parseArgs(process.argv.slice(2));
 const cmds = {
-  pair: cmdPair, config: cmdConfig, bind: cmdBind, api: cmdApi, send: cmdSend, read: cmdRead, inbox: cmdInbox, attach: cmdAttach,
+  pair: cmdPair, config: cmdConfig, bind: cmdBind, api: cmdApi, send: cmdSend, read: cmdRead, inbox: cmdInbox, watch: cmdWatch, attach: cmdAttach,
   install: cmdInstall, uninstall: cmdUninstall, status: cmdStatus,
   run: ({ opt }) => new Listener(loadAgent(opt.name)).start(),
 };

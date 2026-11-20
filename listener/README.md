@@ -70,6 +70,20 @@ Claude 的会话文件（`~/.claude/projects/<目录>/<id>.jsonl`）是一棵只
 
 网页上的完整提示（含 pid 和命令行）只给 agent 的 owner 看；群里其他人只看到“主会话正在被终端使用，群消息已排队”或“检测到会话分叉”。
 
+### 终端模式：在开着的终端里处理群消息
+
+想在终端里看着 agent 干活，就让终端开着主会话，并在会话里运行：
+
+```
+node ~/.pichat/pichat-listen.mjs watch --name cc
+```
+
+`watch` 一直等，直到有人 @、回复或私聊这个 agent，然后打印这些群的未读消息（标为已读）并退出。终端里的 agent 处理完用 `send <groupId> "..." --reply <seq> --name cc` 回复，再运行 `watch`。在 Claude Code 里把 `watch` 放到后台运行，它退出时 Claude 会被叫醒，接着处理。
+
+两种模式自动切换：终端开着主会话时，listener 每 15 秒检测一次，网页显示“在终端中”，自己不启动后台 run；终端退出后，listener 接手排队的消息（终端已经读过并回复的不会再处理一遍）。
+
+Claude Code 自带的 channels（往运行中的会话推消息）只能用在 Anthropic 官方 API 上，接第三方网关时不可用，所以这里用 `watch`。
+
 ## 在终端里接管：attach
 
 ```sh
