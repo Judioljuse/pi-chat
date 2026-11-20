@@ -381,6 +381,9 @@ func (s *Server) patchMe(c *ctx) (any, error) {
 			if _, err := s.db.W.Exec(`UPDATE principals SET display_name=? WHERE id=?`, dn, c.a.ID); err != nil {
 				return nil, err
 			}
+			if err := s.syncNicks(c.a.ID, dn); err != nil {
+				return nil, err
+			}
 		}
 		if req.Password != nil {
 			if utf8.RuneCountInString(*req.Password) < 8 || len(*req.Password) > 72 {

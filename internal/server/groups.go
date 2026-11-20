@@ -207,6 +207,34 @@ func uniqueNick(base string, taken []string) string {
 	return nick
 }
 
+// syncNicks gives pid the nick dn in every group it is in (made unique per group, keeping the
+// current nick when it already fits), so a rename shows up in all groups' member lists and @s.
+func (s *Server) syncNicks(pid, dn string) error {
+	return s.tx(func(tx *sql.Tx, after *[]func()) error {
+		gids, err := scanStrings(tx.Query(`SELECT group_id FROM members WHERE principal_id=?`, pid))
+		if err != nil {
+			return err
+		}
+		for _, gid := range gids {
+			var cur string
+			tx.QueryRow(`SELECT nick FROM members WHERE group_id=? AND principal_id=?`, gid, pid).Scan(&cur)
+			others, err := scanStrings(tx.Query(`SELECT lower(nick) FROM members WHERE group_id=? AND principal_id<>?`, gid, pid))
+			if err != nil {
+				return err
+			}
+			nick := uniqueNick(dn, others)
+			if nick == cur {
+				continue
+			}
+			if _, err := tx.Exec(`UPDATE members SET nick=? WHERE group_id=? AND principal_id=?`, nick, gid, pid); err != nil {
+				return err
+			}
+			s.groupChanged(tx, after, gid)
+		}
+		return nil
+	})
+}
+
 // removeMember removes pid (and, for humans, their agents) from gid.
 func (s *Server) removeMember(tx *sql.Tx, after *[]func(), gid, pid, why string) error {
 	ids := []string{pid}

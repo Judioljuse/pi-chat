@@ -247,6 +247,9 @@ func (s *Server) patchAgent(c *ctx) (any, error) {
 			}
 			return nil, err
 		}
+		if err := s.syncNicks(id, dn); err != nil {
+			return nil, err
+		}
 	}
 	if req.CommanderTier != nil {
 		if *req.CommanderTier != "project" && *req.CommanderTier != "full" {
