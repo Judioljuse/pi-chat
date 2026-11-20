@@ -231,7 +231,8 @@ async function cmdWatch({ opt }) {
   const creds = apiCreds(opt);
   const { server, token, headers } = creds;
   // Starting watch again means the terminal finished what the last watch handed it, replied or not.
-  if (creds.agent) for (const gid of Object.keys(readJSON(terminalRunsFile(creds.agent), {}))) await endTerminalRun(creds, gid, true);
+  // --keep: still working on the last hand-off (e.g. a long task); keep its timer running while listening.
+  if (creds.agent && !opt.keep) for (const gid of Object.keys(readJSON(terminalRunsFile(creds.agent), {}))) await endTerminalRun(creds, gid, true);
   const until = opt.timeout && opt.timeout !== true ? Date.now() + Number(opt.timeout) * 1e3 : Infinity;
   let cursor;
   for (;;) {
@@ -1843,7 +1844,7 @@ const HELP = `pichat listener
   send <groupId> "text" [--reply N] [--mention X] [--raw]  用 $PICHAT_TOKEN 发消息（--raw 不整理 @昵称）
   attach --name <名字>               在终端里接管 agent 的主会话（listener 暂停并排队新消息）
   read <groupId> [--limit N]         读未读消息（标为已读），--limit 看最近 N 条
-  watch --name <名字> [--timeout S]  等到有人 @ / 回复 / 私聊这个 agent，打印这些消息后退出（终端模式用）
+  watch --name <名字> [--timeout S] [--keep]  等到有人 @ / 回复 / 私聊这个 agent，打印这些消息后退出（终端模式用）
   inbox                              列出有未读消息的群
   （api/send/read/inbox 的 token：$PICHAT_TOKEN，否则 --name 或 $PICHAT_NAME）
 

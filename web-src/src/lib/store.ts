@@ -313,7 +313,15 @@ export async function openChat(id: string) {
         loaded: true,
       }
     })
-  } else await catchUp(id)
+  } else {
+    await catchUp(id)
+    // The cached chat keeps the divider from an earlier visit; recompute it from the fresh read position.
+    const meId = state.me?.id
+    const myRead = g.members.find((x) => x.id === meId)?.lastReadSeq ?? 0
+    patchChat(id, (c) => ({
+      firstUnread: myRead < g.lastSeq ? (c.msgs.find((x) => x.seq > myRead && x.author?.id !== meId)?.seq ?? null) : null,
+    }))
+  }
   markRead(id)
 }
 

@@ -172,7 +172,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const detect = (el: HTMLTextAreaElement) => {
     const before = el.value.slice(0, el.selectionStart)
-    const mt = /(?:^|\s)@([^\s@]{0,32})$/.exec(before)
+    // @ after start, whitespace or any non-ASCII-word char ("请@"), but not inside an email like a@b.
+    const mt = /(?:^|[^A-Za-z0-9_.])@([^\s@]{0,32})$/.exec(before)
     setPop(mt ? { q: mt[1], start: el.selectionStart - mt[1].length - 1 } : null)
   }
 
@@ -283,7 +284,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           <span className="min-w-0 flex-1 truncate">
             回复 <b className="font-medium text-body">{reply.author?.name}</b>：{snippet(reply)}
           </span>
-          <Button variant="ghost" size="icon-xs" aria-label="取消回复" onClick={onClearReply}>
+          <Button type="button" variant="ghost" size="icon-xs" aria-label="取消回复" onClick={onClearReply}>
             <X />
           </Button>
         </div>
@@ -355,6 +356,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     variant="ghost"
                     size="icon-sm"
                     className="rounded-control text-muted-foreground hover:bg-accent"
+                    type="button"
                     aria-label="提及成员"
                     title="提及成员"
                     onClick={insertAt}
