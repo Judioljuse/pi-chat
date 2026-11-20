@@ -337,7 +337,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               aria-label="消息"
               onKeyDown={onKeyDown}
               onClick={(e) => detect(e.currentTarget)}
-              onBlur={() => setTimeout(() => setPop(null), 150)}
+              // Close only if focus really left: the @ button blurs the textarea, then refocuses it and opens the popup.
+              onBlur={() => setTimeout(() => document.activeElement !== ta.current && setPop(null), 150)}
               onPaste={(e) => {
                 const fs = [...(e.clipboardData?.files ?? [])]
                 if (fs.length) {

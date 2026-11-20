@@ -115,6 +115,8 @@ export interface Grant {
   userId: string
   groupId: string
   userName?: string
+  /** 'agent' when another agent is granted to command this one. */
+  userKind?: 'human' | 'agent' | ''
   groupName?: string
   createdAt?: number
 }

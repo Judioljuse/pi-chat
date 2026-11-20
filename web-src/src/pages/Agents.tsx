@@ -480,12 +480,14 @@ function Grants({ a }: { a: Agent }) {
     // Refetch only when the picked group changes.
   }, [gid])
 
-  const humans = useMemo(() => {
+  // Humans first, then agents (an agent can be granted to command this one); never me or this agent.
+  const people = useMemo(() => {
     const src = gid === ALL ? rooms.map((g) => info[g.id]) : gid ? [info[gid]] : []
     const m = new Map<string, Member>()
-    for (const g of src) for (const x of g?.members ?? []) if (x.kind === 'human' && x.id !== meId) m.set(x.id, x)
-    return [...m.values()]
-  }, [gid, rooms, info, meId])
+    // Agent commanders must be granted per group (server rejects 所有群 for agents).
+    for (const g of src) for (const x of g?.members ?? []) if (x.id !== meId && x.id !== a.id && !(gid === ALL && x.kind === 'agent')) m.set(x.id, x)
+    return [...m.values()].sort((x, y) => (x.kind === y.kind ? 0 : x.kind === 'human' ? -1 : 1))
+  }, [gid, rooms, info, meId, a.id])
 
   const userName = (g: Grant) => (g.userId === ALL ? '所有人类' : g.userName || findHuman(g.userId) || g.userId)
   const groupName = (g: Grant) =>
@@ -508,13 +510,14 @@ function Grants({ a }: { a: Agent }) {
   }
 
   return (
-    <Row label="指挥者授权" hint="你本人永远是指挥者。被授权的人在对应的群里 @ 它时，它会按上面的档位执行任务。">
+    <Row label="指挥者授权" hint="你本人永远是指挥者。被授权的人或 agent 在对应的群里 @ 它时，它会按上面的档位执行任务。授权 agent 后，agent 之间的接力仍受 6 跳上限和每小时唤醒次数限制；被授权的 agent 被非指挥者叫醒时写的消息不算指令。">
       {a.grants?.length ? (
         <ul className="flex flex-col divide-y divide-border rounded-control border border-border">
           {a.grants.map((g) => (
             <li key={g.userId + g.groupId} className="flex items-center gap-2 px-3 py-2 text-[13px]">
               <span className="min-w-0 flex-1 truncate">
                 <span className="font-medium text-foreground">{userName(g)}</span>
+                {g.userKind === 'agent' && <AgentTag className="ml-1 align-middle" />}
                 <span className="mx-1.5 text-muted-foreground">在</span>
                 <span className="text-body">{groupName(g)}</span>
               </span>
@@ -538,13 +541,14 @@ function Grants({ a }: { a: Agent }) {
         <GroupSelect value={gid} onChange={setGid} placeholder="选择群" extra={[{ value: ALL, label: '所有群' }]} className="sm:flex-1" />
         <Select value={uid} onValueChange={setUid} disabled={!gid}>
           <SelectTrigger className="w-full bg-background sm:flex-1">
-            <SelectValue placeholder="选择人" />
+            <SelectValue placeholder="选择人或 agent" />
           </SelectTrigger>
           <SelectContent position="popper">
             {gid && gid !== ALL && <SelectItem value={ALL}>该群所有人类</SelectItem>}
-            {humans.map((m) => (
+            {people.map((m) => (
               <SelectItem key={m.id} value={m.id}>
                 {m.displayName || m.nick}
+                {m.kind === 'agent' && <AgentTag />}
               </SelectItem>
             ))}
           </SelectContent>

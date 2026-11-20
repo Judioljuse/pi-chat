@@ -3,6 +3,7 @@ import { Link, RefreshCw } from 'lucide-react'
 import { CopyField } from '@/components/pichat/copy-field'
 import { PrincipalAvatar } from '@/components/pichat/avatar'
 import { RoleBadge } from '@/components/pichat/role-badge'
+import { ToolsSection } from '@/components/pichat/tools-section'
 import { UpdateSection } from '@/components/pichat/update-section'
 import { Empty, Page, Section } from '@/components/pichat/page'
 import { Button } from '@/components/ui/button'
@@ -74,6 +75,8 @@ export function Admin() {
       </Section>
 
       <UpdateSection />
+
+      <ToolsSection />
 
       <Section className="p-0">
         <div className="flex items-center px-4 pt-4 pb-2">

@@ -13,9 +13,38 @@ import (
 	"unicode/utf8"
 )
 
-// canCommandSQL is true when author ?1 (a human) may command agent ?2 in group ?3.
-const canCommandSQL = `EXISTS(SELECT 1 FROM principals ag JOIN principals au ON au.id=?1 WHERE ag.id=?2 AND au.kind='human' AND (ag.owner_id=au.id
-	OR EXISTS(SELECT 1 FROM grants gr WHERE gr.agent_id=ag.id AND gr.user_id IN (au.id,'*') AND gr.group_id IN (?3,'*') AND NOT (gr.user_id='*' AND gr.group_id='*'))))`
+// canCommandSQL is true when author ?1 may command agent ?2 in group ?3: the author is the
+// agent's (human) owner, or the owner granted the author (a human, '*' = every human, or an
+// active agent) in that group or '*'. An agent never commands itself; '*' never covers agents.
+const canCommandSQL = `EXISTS(SELECT 1 FROM principals ag JOIN principals au ON au.id=?1 WHERE ag.id=?2 AND au.id<>ag.id
+	AND (au.kind='human' OR (au.disabled=0 AND au.deleted_at IS NULL)) AND ((au.kind='human' AND ag.owner_id=au.id)
+	OR EXISTS(SELECT 1 FROM grants gr WHERE gr.agent_id=ag.id AND (gr.user_id=au.id OR (gr.user_id='*' AND au.kind='human'))
+		AND gr.group_id IN (?3,'*') AND NOT (gr.user_id='*' AND gr.group_id='*'))))`
+
+// viaCommandsSQL is true when message alias m was not written by a restricted run: a reply an
+// agent wrote while running for a non-commander must not carry command authority onward.
+func viaCommandsSQL(m string) string {
+	return `COALESCE(json_extract(` + m + `.via,'$.tier'),'')<>'restricted'`
+}
+
+// postCanCommand reports whether a message posted by a can carry command authority at all
+// (see viaCommandsSQL): humans and agents on their own token yes, restricted runs no.
+func postCanCommand(a *actor) bool {
+	return !(a.isAgent() && a.TokenKind == "run" && a.RunTier == "restricted")
+}
+
+// viaRestricted reports whether a stored via JSON says the message came from a restricted run.
+func viaRestricted(via any) bool {
+	raw, ok := via.(json.RawMessage)
+	if !ok || len(raw) == 0 {
+		return false
+	}
+	var v struct {
+		Tier string `json:"tier"`
+	}
+	json.Unmarshal(raw, &v)
+	return v.Tier == "restricted"
+}
 
 func (s *Server) canCommand(q querier, authorID, agentID, gid string) bool {
 	if authorID == "" {
@@ -142,7 +171,7 @@ func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args 
 				v = s.canCommand(q, aid, reader.ID, gid)
 				cmd[aid] = v
 			}
-			au["canCommandYou"] = v
+			au["canCommandYou"] = v && !viaRestricted(m["via"])
 		}
 	}
 	mrows, err := q.Query(`SELECT seq,target_id FROM mentions WHERE group_id=? AND seq BETWEEN ? AND ? AND reason='mention'`, gid, lo, hi)

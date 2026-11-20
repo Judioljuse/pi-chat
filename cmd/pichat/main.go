@@ -11,6 +11,7 @@ import (
 
 	"pichat/internal/server"
 	"pichat/internal/store"
+	"pichat/internal/tools"
 	"pichat/internal/update"
 	"pichat/internal/version"
 	"pichat/listener"
@@ -34,7 +35,8 @@ func usage() {
              --webhook-allow <CIDR,...>（允许 webhook 访问的内网地址，默认全部禁止）
              --update on|off、--update-repo owner/name、--update-api URL、--update-mirror 前缀（在线更新，见 README「更新」）
 环境变量：PICHAT_LISTEN、PICHAT_DATA、PICHAT_PUBLIC_URL、PICHAT_TRUSTED_PROXIES、PICHAT_WEBHOOK_ALLOW、
-          PICHAT_UPDATE、PICHAT_UPDATE_REPO、PICHAT_UPDATE_API、PICHAT_UPDATE_MIRROR
+          PICHAT_UPDATE、PICHAT_UPDATE_REPO、PICHAT_UPDATE_API、PICHAT_UPDATE_MIRROR、
+          PICHAT_SEARCH_PROVIDER（duckduckgo|brave|tavily|bocha|searxng）、PICHAT_SEARCH_KEY、PICHAT_SEARCH_URL
 `)
 	os.Exit(2)
 }
@@ -77,6 +79,7 @@ func main() {
 	}
 	cfg.WebhookAllow, err = server.ParseCIDRs(hookAllow)
 	check(err)
+	cfg.Search = tools.SearchConfig{Provider: os.Getenv("PICHAT_SEARCH_PROVIDER"), Key: os.Getenv("PICHAT_SEARCH_KEY"), URL: os.Getenv("PICHAT_SEARCH_URL")}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	switch cmd {
 	case "serve":

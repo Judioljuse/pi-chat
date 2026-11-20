@@ -65,7 +65,9 @@ func (w *waker) dispatch(author *actor, gid string, seq, hop int64, targets []ta
 			skip("budget")
 			continue
 		}
-		commander := author.isHuman() && s.canCommand(s.db.R, author.ID, t.id, gid)
+		// Granted agents command too; their messages still count hops and the owner budget above.
+		// A restricted run's message never commands: it may just relay a non-commander's words.
+		commander := postCanCommand(author) && s.canCommand(s.db.R, author.ID, t.id, gid)
 		if author.isHuman() && !commander && !s.rl.allow("sender:"+author.ID+":"+t.id, 10, time.Hour) {
 			skip("sender_limit")
 			continue

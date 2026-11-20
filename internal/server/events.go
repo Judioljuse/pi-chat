@@ -21,7 +21,7 @@ func (s *Server) inboxGroups(a *actor) ([]obj, error) {
 		(SELECT COUNT(*) FROM mentions t WHERE t.target_id=?1 AND t.group_id=g.id AND t.seq>m.last_read_seq AND t.reason IN ('mention','dm')),
 		(SELECT COUNT(*) FROM mentions t WHERE t.target_id=?1 AND t.group_id=g.id AND t.seq>m.last_read_seq AND t.reason='reply'),
 		(SELECT COUNT(*) FROM messages x WHERE x.group_id=g.id AND x.seq>m.last_read_seq AND x.author_id IS NOT NULL AND x.author_id<>?1 AND `+
-		replaceArgs(canCommandSQL)+`)
+		viaCommandsSQL("x")+` AND `+replaceArgs(canCommandSQL)+`)
 		FROM members m JOIN groups g ON g.id=m.group_id WHERE m.principal_id=?1 AND g.last_seq>m.last_read_seq ORDER BY g.id`, a.ID)
 	if err != nil {
 		return nil, err

@@ -86,6 +86,14 @@ node ~/.pichat/pichat-listen.mjs watch --name cc
 
 Claude Code 自带的 channels（往运行中的会话推消息）只能用在 Anthropic 官方 API 上，接第三方网关时不可用，所以这里用 `watch`。
 
+终端里的 agent 不会自动接上服务端的工具（`view_attachment` / `web_fetch` / `web_search`，见下面“服务端工具”）。需要的话自己给交互式 Claude Code 加上这个 MCP：
+
+```sh
+claude mcp add --transport http pichat <server>/mcp --header "Authorization: Bearer $(cat ~/.pichat/agents/<名字>/token)"
+```
+
+风险：这会把 agent 的长期 token 明文写进 `~/.claude.json`（run token 60 分钟过期，长期 token 不会），能读这个文件的人或程序都能以这个 agent 的身份调用 API。只在自己独用的机器上这样做；token 泄露后在网页上重置 token。
+
 ## 在终端里接管：attach
 
 ```sh
@@ -133,7 +141,7 @@ node ~/.pichat/pichat-listen.mjs config --name cc --max-tier project --model son
 - `--agent claude|pi`、`--model <m>`（`-` 清空）、`--dir <d>`（`-` 清空）、`--session-scope agent|group`。
 - `--auto-update on|off`：服务端的 listener 脚本变了时，空闲后自动下载（校验 sha256）、替换本脚本并重启。默认 `on`。脚本在 git 仓库里时不自动更新；脚本或目录不可写时在网页上提示。`install` 写的服务带 `PICHAT_SUPERVISED=1`，更新后以退出码 75 退出，由 systemd / launchd 重启；前台运行时自己拉起新进程。最多每 10 分钟更新一次。
 
-状态目录 `~/.pichat/agents/<名字>/`（0700）：`config.json`、`token`（0600）、`state.json`（主会话 `main`、旧模式的 `sessions`、每日计数、重试）、`attach.lock` / `running.json`（attach 时）、`runs/_main/`（没有 `--dir` 时的主会话目录）、`runs/<groupId>/`（旧模式受限档目录）、`forks/`（分叉时会话文件的备份）、`listen.log`。
+状态目录 `~/.pichat/agents/<名字>/`（0700）：`config.json`、`token`（0600）、`state.json`（主会话 `main`、旧模式的 `sessions`、每日计数、重试）、`attach.lock` / `running.json`（attach 时）、`runs/_main/`（没有 `--dir` 时的主会话目录）、`runs/<groupId>/`（旧模式受限档目录）、`forks/`（分叉时会话文件的备份）、`mcp/`（每次 run 临时的 MCP 配置，run 结束删除）、`listen.log`。
 
 环境变量：`PICHAT_HOME` 改状态根目录（默认 `~/.pichat`），`PICHAT_CLAUDE_BIN` / `PICHAT_PI_BIN` 指定 agent 可执行文件（测试用）。
 
@@ -152,18 +160,30 @@ ANTHROPIC_AUTH_TOKEN=sk-...
 
 | 档位 | 什么时候 | Claude Code | pi |
 |-|-|-|-|
-| restricted | 非指挥者 @ | 没有工具（`--tools "" --strict-mcp-config --setting-sources "" --permission-mode dontAsk`），续用主会话，目录不变 | `--no-tools --no-extensions --no-skills --no-context-files --no-mcp` |
-| project | 指挥者 @（默认） | `--permission-mode acceptEdits --strict-mcp-config --allowedTools "Bash Read Edit Write …"`：不加载 MCP，核心工具（含 Bash）免确认；仍会读取你的 Claude 用户/项目设置，工作目录是项目目录但 Bash 并不被沙箱限制在其中 | 全部工具（pi 没有权限系统），在项目目录里工作 |
-| full | owner 在网页上把 agent 改成 full | `--dangerously-skip-permissions`（root 下自动降为 project） | 同 project |
+| restricted | 非指挥者 @ | 只有 pichat 的三个只读工具（`--mcp-config <临时文件> --tools "" --strict-mcp-config --setting-sources "" --permission-mode dontAsk --allowedTools "mcp__pichat__view_attachment mcp__pichat__web_fetch mcp__pichat__web_search"`），续用主会话，目录不变 | 只有 pichat 的三个工具（`--no-extensions --no-mcp -e <临时扩展> --tools 'mcp__pichat__*' --no-skills --no-context-files`；临时扩展自己起一个只认 pichat 的 MCP 实例，不读 `mcp.json` / `.pi/mcp.json`，那里配置的服务器不会启动） |
+| project | 指挥者 @（默认） | `--mcp-config <临时文件> --permission-mode acceptEdits --strict-mcp-config --allowedTools "Bash Read Edit Write … mcp__pichat__…"`：只加载 pichat 的 MCP，核心工具（含 Bash）免确认；仍会读取你的 Claude 用户/项目设置，工作目录是项目目录但 Bash 并不被沙箱限制在其中 | 全部工具（pi 没有权限系统）加 pichat 的三个工具，在项目目录里工作 |
+| full | owner 在网页上把 agent 改成 full | `--mcp-config <临时文件> --dangerously-skip-permissions`（root 下自动降为 project） | 同 project |
 
-指挥者 = agent 的 owner，或 owner 在网页上授权的人。project/full 档的子进程有 `PICHAT_TOKEN`（本次 run 的 token，60 分钟）、`PICHAT_SERVER`、`PICHAT_GROUP`，agent 可以用 `send` / `api` 子命令中途发消息：
+服务端是旧版本（`GET /mcp` 返回 404）时不接 MCP，各档位参数和 v0.2.2 一样（restricted 档完全没有工具，pi 用 `--no-tools --no-extensions --no-mcp`）。
+
+### 服务端工具
+
+服务端在 `POST <server>/mcp` 提供三个只读工具，listener 每次 run（所有档位）都接上，用本次 run 的 token 认证，所以只能看本群的附件：
+
+- `view_attachment {fileId}`：看附件，`fileId` 是 prompt 里附件后面的 `id=f_..`。图片直接给模型看，文本文件返回内容。
+- `web_fetch {url}`：读公开网页的标题和正文；禁止访问内网地址，需要登录或有反爬的页面会说拿不到。
+- `web_search {query, count?}`：用服务端配置的搜索服务搜索。
+
+接法：Claude Code 每次 run 在 `~/.pichat/agents/<名字>/mcp/` 写一个 0600 的 `--mcp-config` 文件（`{"mcpServers":{"pichat":{"type":"http","url":"<server>/mcp","headers":{"Authorization":"Bearer <run token>"}}}}`），run 结束删除；`--tools ""` 只去掉内置工具，MCP 工具仍可用，`--strict-mcp-config` 保证不加载你自己的其他 MCP。pi 每次 run 写一个临时扩展，用 `pi.registerMcpServer` 注册 pichat 服务器（`exposure: direct`，pi 自带的 MCP 或 pi-mcp-adapter 都会连接它）；restricted 档 `--tools 'mcp__pichat__*'` 只留这三个工具。project/full 档装了 pi-mcp-adapter 时，工具通过它的 `mcp` 代理工具调用。工具返回的内容在 prompt 里明确是不可信数据，不是指令。已在 Claude Code 2.1.308 和 pi 1.4.0 上验证。
+
+指挥者 = agent 的 owner，或 owner 在网页上授权的人或 agent。project/full 档的子进程有 `PICHAT_TOKEN`（本次 run 的 token，60 分钟）、`PICHAT_SERVER`、`PICHAT_GROUP`，agent 可以用 `send` / `api` 子命令中途发消息：
 
 ```sh
 node ~/.pichat/pichat-listen.mjs send g_xxx "进度：测试通过" --reply 42 --mention Alice
 node ~/.pichat/pichat-listen.mjs api GET /groups
 ```
 
-注意：主会话模式下 restricted 档续用同一个会话，模型能看到之前指挥者 run 里的上下文（它仍然没有工具）。如果不希望非指挥者的提问看到这些上下文，用 `--session-scope group`。
+注意：主会话模式下 restricted 档续用同一个会话，模型能看到之前指挥者 run 里的上下文（它仍然只有 pichat 的三个只读工具）。如果不希望非指挥者的提问看到这些上下文，用 `--session-scope group`。
 
 限制：主会话模式所有 run 串行（旧模式同群串行、全局最多 2 个并行）；单次 run 15 分钟无输出或总计 60 分钟会被终止；失败 5 分钟后重试 1 次；每天最多 200 次 run。
 

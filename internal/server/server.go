@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"pichat/internal/store"
+	"pichat/internal/tools"
 	"pichat/internal/update"
 )
 
@@ -43,6 +44,10 @@ type Config struct {
 	WebhookAllow []*net.IPNet
 	// Updater checks and installs releases (nil: online update disabled).
 	Updater *update.Updater
+	// Search configures the web_search MCP tool (empty: DuckDuckGo).
+	Search tools.SearchConfig
+	// FetchBlocked are destinations web_fetch refuses (nil: tools.DefaultBlocked). Tests override it.
+	FetchBlocked []*net.IPNet
 }
 
 // ParseCIDRs parses a comma-separated list of CIDRs or bare IPs.
@@ -126,6 +131,10 @@ type Server struct {
 	restarting   atomic.Bool
 	listenerOnce sync.Once
 	listenerSum  string
+
+	fetcher   *tools.Fetcher
+	searcher  *tools.Searcher // nil when the search config is invalid; searchErr says why
+	searchErr string
 }
 
 func New(cfg Config, db *store.DB, assets Assets) *Server {
@@ -143,6 +152,16 @@ func New(cfg Config, db *store.DB, assets Assets) *Server {
 	}
 	s.wk = newWaker(s)
 	s.upd = cfg.Updater
+	if cfg.FetchBlocked == nil {
+		cfg.FetchBlocked = tools.DefaultBlocked
+	}
+	s.fetcher = tools.NewFetcher(cfg.FetchBlocked)
+	if sr, err := tools.NewSearcher(cfg.Search); err != nil {
+		s.searchErr = err.Error()
+		s.log.Error("搜索服务配置有误，web_search 不可用：" + err.Error())
+	} else {
+		s.searcher = sr
+	}
 	s.routes()
 	return s
 }

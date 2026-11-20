@@ -189,7 +189,7 @@ func (s *Server) agentJSON(id string) (obj, error) {
 }
 
 func (s *Server) grants(agentID string) ([]obj, error) {
-	rows, err := s.db.R.Query(`SELECT gr.user_id,gr.group_id,gr.created_at,COALESCE(u.display_name,''),COALESCE(g.name,'')
+	rows, err := s.db.R.Query(`SELECT gr.user_id,gr.group_id,gr.created_at,COALESCE(u.display_name,''),COALESCE(u.kind,''),COALESCE(g.name,'')
 		FROM grants gr LEFT JOIN principals u ON u.id=gr.user_id LEFT JOIN groups g ON g.id=gr.group_id WHERE gr.agent_id=? ORDER BY gr.created_at`, agentID)
 	if err != nil {
 		return nil, err
@@ -197,10 +197,13 @@ func (s *Server) grants(agentID string) ([]obj, error) {
 	defer rows.Close()
 	out := []obj{}
 	for rows.Next() {
-		var uid, gid, un, gn string
+		var uid, gid, un, uk, gn string
 		var at int64
-		rows.Scan(&uid, &gid, &at, &un, &gn)
-		out = append(out, obj{"userId": uid, "groupId": gid, "userName": un, "groupName": gn, "createdAt": at})
+		rows.Scan(&uid, &gid, &at, &un, &uk, &gn)
+		if uid == "*" {
+			uk = "human"
+		}
+		out = append(out, obj{"userId": uid, "groupId": gid, "userName": un, "userKind": uk, "groupName": gn, "createdAt": at})
 	}
 	return out, rows.Err()
 }
@@ -288,7 +291,7 @@ func (s *Server) deleteAgent(c *ctx) (any, error) {
 				return err
 			}
 		}
-		for _, q := range []string{`DELETE FROM tokens WHERE principal_id=?`, `DELETE FROM grants WHERE agent_id=?`,
+		for _, q := range []string{`DELETE FROM tokens WHERE principal_id=?`, `DELETE FROM grants WHERE agent_id=?`, `DELETE FROM grants WHERE user_id=?`,
 			`DELETE FROM wake_configs WHERE agent_id=?`, `DELETE FROM invites WHERE agent_id=?`,
 			`UPDATE principals SET deleted_at=unixepoch()*1000, disabled=1 WHERE id=?`} {
 			if _, err := tx.Exec(q, id); err != nil {
@@ -338,9 +341,17 @@ func (s *Server) changeGrant(c *ctx) (any, error) {
 			return nil, badRequest("不能授权所有群的所有人类")
 		}
 		if req.UserID != "*" {
+			// A human, or any active agent (its owner's consent is not needed: B's owner decides).
 			var kind string
-			if s.db.R.QueryRow(`SELECT kind FROM principals WHERE id=? AND deleted_at IS NULL`, req.UserID).Scan(&kind) != nil || kind != "human" {
-				return nil, badRequest("只能授权人类")
+			if s.db.R.QueryRow(`SELECT kind FROM principals WHERE id=? AND deleted_at IS NULL`, req.UserID).Scan(&kind) != nil || (kind != "human" && kind != "agent") {
+				return nil, badRequest("只能授权人类或 agent")
+			}
+			if req.UserID == id {
+				return nil, badRequest("不能授权 agent 指挥它自己")
+			}
+			// Agent commanders are scoped to one group, so a grant made in one group never carries over.
+			if kind == "agent" && req.GroupID == "*" {
+				return nil, badRequest("授权 agent 时必须选一个具体的群")
 			}
 		}
 		if req.GroupID != "*" {
@@ -420,7 +431,7 @@ func (s *Server) createRunToken(c *ctx) (any, error) {
 		s.db.R.QueryRow(`SELECT EXISTS(SELECT 1 FROM mentions mn JOIN members me ON me.group_id=mn.group_id AND me.principal_id=mn.target_id
 			JOIN messages m ON m.group_id=mn.group_id AND m.seq=mn.seq
 			WHERE mn.target_id=?1 AND mn.group_id=?2 AND mn.seq>me.last_read_seq AND m.recalled_at IS NULL AND m.author_id IS NOT NULL
-			AND `+strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(canCommandSQL, "?1", "m.author_id"), "?2", "?1"), "?3", "?2")+`)`,
+			AND `+viaCommandsSQL("m")+` AND `+strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(canCommandSQL, "?1", "m.author_id"), "?2", "?1"), "?3", "?2")+`)`,
 			c.a.ID, req.GroupID).Scan(&commander)
 	}
 	tier := "restricted"
