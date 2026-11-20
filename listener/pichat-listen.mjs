@@ -230,6 +230,8 @@ async function endTerminalRun({ server, token, headers, agent }, groupId, ok) {
 async function cmdWatch({ opt }) {
   const creds = apiCreds(opt);
   const { server, token, headers } = creds;
+  // Starting watch again means the terminal finished what the last watch handed it, replied or not.
+  if (creds.agent) for (const gid of Object.keys(readJSON(terminalRunsFile(creds.agent), {}))) await endTerminalRun(creds, gid, true);
   const until = opt.timeout && opt.timeout !== true ? Date.now() + Number(opt.timeout) * 1e3 : Infinity;
   let cursor;
   for (;;) {
