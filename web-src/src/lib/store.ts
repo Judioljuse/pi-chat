@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 import { api, ApiError, errorText } from './api'
-import type { Agent, AgentState, Group, GroupSummary, Me, Member, Message, Working } from './types'
+import type { Agent, AgentState, Group, GroupSummary, Me, Member, Message, RuntimeDirs, Working } from './types'
 
 export type Route =
   | { name: 'home' }
@@ -9,7 +9,7 @@ export type Route =
   | { name: 'redeem'; code: string }
   | { name: 'chat'; gid: string }
   | { name: 'settings'; gid: string }
-  | { name: 'agents' }
+  | { name: 'agents'; focus?: string }
   | { name: 'admin' }
   | { name: 'me' }
 
@@ -163,6 +163,8 @@ export interface AgentEvent {
   /** Sent on every event; null when there is no notice. Absent from older servers. */
   notice?: string | null
   noticeAt?: number | null
+  /** Owner-only; absent from older servers and from non-owner events. */
+  dirs?: RuntimeDirs | null
 }
 
 /** Apply a live 'agent' SSE event to every group member list and to my agents page. */
@@ -203,6 +205,7 @@ export function applyAgentEvent(e: AgentEvent) {
                 name: e.name ?? a.runtime?.name,
                 at: Date.now(),
                 ...(e.notice !== undefined && { notice: e.notice, noticeAt: e.noticeAt }),
+                ...(e.dirs !== undefined && { dirs: e.dirs }),
               },
             }
           : a,

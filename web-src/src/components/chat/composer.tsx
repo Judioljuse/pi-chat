@@ -13,6 +13,7 @@ import { AttachmentUpload, type AttachmentUploadItem } from '@/components/motion
 import { AgentTag, PrincipalAvatar } from '@/components/pichat/avatar'
 import { AgentStateChip } from '@/components/pichat/agent-state'
 import { RoleBadge } from '@/components/pichat/role-badge'
+import { ProfileTrigger } from '@/components/pichat/profile-card'
 import { Button } from '@/components/ui/button'
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -479,10 +480,11 @@ function Kbd({ children }: { children: string }) {
   return <kbd className="rounded-[4px] border border-border bg-background px-1 font-sans text-[10.5px] leading-4">{children}</kbd>
 }
 
-export function MemberLine({ m, working, stacked }: { m: Member; working?: boolean; stacked?: boolean }) {
+export function MemberLine({ m, working, stacked, profile }: { m: Member; working?: boolean; stacked?: boolean; profile?: boolean }) {
   const name = memberName(m)
   const state = m.kind === 'agent' ? agentStateOf(m, working) : null
-  const avatar = (
+  const seed = { id: m.id, kind: m.kind, name, platform: m.platform, ownerName: m.ownerName }
+  const avatarFace = (
     <PrincipalAvatar
       id={m.id}
       name={name}
@@ -493,13 +495,26 @@ export function MemberLine({ m, working, stacked }: { m: Member; working?: boole
       working={state === 'running'}
     />
   )
+  const avatar = profile ? (
+    <ProfileTrigger seed={seed} className="shrink-0 rounded-[9px]">
+      {avatarFace}
+    </ProfileTrigger>
+  ) : (
+    avatarFace
+  )
   if (stacked) {
     return (
       <>
         {avatar}
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className="min-w-0 truncate text-[13.5px] font-medium text-foreground">{name}</span>
+            {profile ? (
+              <ProfileTrigger seed={seed} className="min-w-0 truncate text-[13.5px] font-medium text-foreground hover:underline">
+                {name}
+              </ProfileTrigger>
+            ) : (
+              <span className="min-w-0 truncate text-[13.5px] font-medium text-foreground">{name}</span>
+            )}
             {m.kind === 'agent' && <AgentTag className="shrink-0" />}
             {m.role !== 'member' && <RoleBadge role={m.role} className="shrink-0" />}
           </span>

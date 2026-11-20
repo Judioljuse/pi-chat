@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Copy, Ellipsis, KeyRound, Pencil, Plus, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
 import TaskRows, { type TaskRow } from '@/components/beautiful/task-rows'
 import CodeBlock from '@/components/beautiful/code-block'
@@ -174,10 +174,20 @@ function PairCodeView({ pair }: { pair: PairCode }) {
 
 function AgentCard({ a }: { a: Agent }) {
   const working = useStore((s) => workingAgentIds(s).has(a.id))
+  // #/agents/<id> (the profile card's 管理 button): expand this card and scroll to it.
+  const focused = useStore((s) => s.route.name === 'agents' && s.route.focus === a.id)
   const { ask, dialog } = useConfirm()
   const [renaming, setRenaming] = useState(false)
   const [reset, setReset] = useState<PairCode | null>(null)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(focused)
+  const card = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!focused) return
+    setOpen(true)
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
+    const t = setTimeout(() => card.current?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' }), 50)
+    return () => clearTimeout(t)
+  }, [focused])
   const platform = PLATFORM[a.platform ?? ''] || a.platform || '未知平台'
 
   const patch = async (body: Partial<Pick<Agent, 'displayName' | 'commanderTier' | 'ownerNotes' | 'disabled'>>, msg = '已保存') => {
@@ -247,6 +257,8 @@ function AgentCard({ a }: { a: Agent }) {
 
   return (
     <Collapsible
+      ref={card}
+      id={`agent-${a.id}`}
       open={open}
       onOpenChange={setOpen}
       className={cn('rounded-card border border-border bg-card animate-fade-up', a.disabled && 'opacity-80')}
@@ -726,6 +738,7 @@ function Runtime({ a, state }: { a: Agent; state: ReturnType<typeof agentStateOf
           ),
         )}
         {rt?.listener ? kv('listener', <ListenerVersion l={rt.listener} name={localName} />) : null}
+        <WorkDirs dirs={rt?.dirs} />
         {rt?.at ? kv('更新于', fmtTime(rt.at)) : null}
       </div>
       <div className="flex flex-col gap-1.5">
@@ -762,6 +775,58 @@ function Runtime({ a, state }: { a: Agent; state: ReturnType<typeof agentStateOf
       </div>
       {dialog}
     </Row>
+  )
+}
+
+function DirValue({ dir }: { dir: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => copy(dir, '已复制目录')}
+      title={`复制 ${dir}`}
+      className="-mx-1 inline-flex max-w-full items-center gap-1.5 rounded-chip px-1 font-mono text-[12.5px] transition-colors hover:bg-accent"
+    >
+      <span className="truncate">{dir}</span>
+      <Copy className="size-3 shrink-0 text-muted-foreground" />
+    </button>
+  )
+}
+
+/** Work dirs the listener reported in PUT /me/runtime (owner only). Older listeners send none. */
+function WorkDirs({ dirs }: { dirs?: NonNullable<Agent['runtime']>['dirs'] }) {
+  const groups = useStore((s) => s.groups)
+  const row = (label: string, value: React.ReactNode) => (
+    <div className="flex min-w-0 items-start gap-3 py-1.5 text-[13px]">
+      <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 flex-1 text-body">{value}</span>
+    </div>
+  )
+  if (!dirs) return row('工作目录', <span className="text-muted-foreground">未知（listener 版本较旧）</span>)
+  const main = dirs.main || ''
+  const def = dirs.default || ''
+  const binds = Object.entries(dirs.binds ?? {}).filter(([, d]) => typeof d === 'string' && d)
+  const groupName = (gid: string) => groups.find((g) => g.id === gid)?.name || gid
+  return (
+    <>
+      {row('工作目录', main ? <DirValue dir={main} /> : <span className="text-muted-foreground">未知</span>)}
+      {def && def !== main ? row('默认目录', <DirValue dir={def} />) : null}
+      {binds.length > 0 &&
+        row(
+          '群绑定目录',
+          <ul className="flex min-w-0 flex-col gap-1">
+            {binds.map(([gid, d]) => (
+              <li key={gid} className="flex min-w-0 items-center gap-2">
+                <span className="max-w-[40%] shrink-0 truncate text-[12.5px] text-muted-foreground" title={gid}>
+                  {groupName(gid)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <DirValue dir={d} />
+                </span>
+              </li>
+            ))}
+          </ul>,
+        )}
+    </>
   )
 }
 

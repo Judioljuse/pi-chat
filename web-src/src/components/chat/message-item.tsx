@@ -11,6 +11,7 @@ import {
   MessageHeader,
 } from '@/components/agents/message'
 import { AgentTag, PrincipalAvatar } from '@/components/pichat/avatar'
+import { ProfileTrigger, type ProfileSeed } from '@/components/pichat/profile-card'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { fileUrl } from '@/lib/api'
@@ -228,9 +229,22 @@ export const MessageItem = memo(function MessageItem({
   const readers =
     lastInRun && m.seq > 0 ? members.filter((x) => x.id !== a?.id && x.id !== meId && (x.lastReadSeq || 0) >= m.seq) : []
   const author = members.find((x) => x.id === a?.id)
+  const seed: ProfileSeed | null = a
+    ? { id: a.id, kind: a.kind, name: a.name, platform: a.platform ?? author?.platform, ownerName: a.ownerName || author?.ownerName }
+    : null
   const avatar = a ? (
-    <PrincipalAvatar id={a.id} name={a.name} kind={a.kind} platform={a.platform ?? author?.platform} size="md" />
+    <ProfileTrigger seed={seed!} className="rounded-[9px]">
+      <PrincipalAvatar id={a.id} name={a.name} kind={a.kind} platform={a.platform ?? author?.platform} size="md" />
+    </ProfileTrigger>
   ) : null
+  const authorName = (fallback: string) =>
+    seed ? (
+      <ProfileTrigger seed={seed} className="text-[13px] font-medium text-foreground hover:underline">
+        {a?.name || fallback}
+      </ProfileTrigger>
+    ) : (
+      <span className="text-[13px] font-medium text-foreground">{fallback}</span>
+    )
 
   // Desktop hover row. Touch devices use the long-press sheet instead and never show it.
   const actions = !pending && (
@@ -293,11 +307,11 @@ export const MessageItem = memo(function MessageItem({
             {mine ? (
               <>
                 <span className="text-muted-foreground tabular-nums">{fmtTime(m.createdAt)}</span>
-                <span className="text-[13px] font-medium text-foreground">{a?.name || '我'}</span>
+                {authorName('我')}
               </>
             ) : (
               <>
-                <span className="text-[13px] font-medium text-foreground">{a?.name || '?'}</span>
+                {authorName('?')}
                 {isAgent && <AgentTag />}
                 {isAgent && (a?.ownerName || author?.ownerName) && (
                   <span className="text-muted-foreground">owner：{a?.ownerName || author?.ownerName}</span>

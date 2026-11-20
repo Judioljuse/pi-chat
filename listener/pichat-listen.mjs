@@ -488,6 +488,7 @@ class Listener {
     // Why this copy never updates itself, so the web page doesn't promise an update that won't come.
     this.selfSkip ??= inGitTree(SELF.path) ? 'git' : unwritable(SELF.path) ? 'readonly' : '';
     if (this.selfSkip) body.listener.skip = this.selfSkip;
+    body.dirs = runtimeDirs(this.state.main?.cwd, this.config.dir, this.config.binds);
     return this.call('PUT', '/me/runtime', body).catch((e) => this.log('上报运行状态失败：', e.message));
   }
 
@@ -1353,6 +1354,22 @@ function outputParser(agent) {
 
 const isDir = (d) => !!d && !!fs.statSync(d, { throwIfNoEntry: false })?.isDirectory();
 const sessionScope = (config) => (config?.sessionScope === 'group' ? 'group' : 'agent');
+
+// Work dirs shown to the owner on the agents page: main session cwd, config.dir, group binds
+// (absolute paths only, <= 300 chars, at most 50 binds; the server sanitizes again).
+function runtimeDirs(main, dir, binds) {
+  const ok = (d) => typeof d === 'string' && path.isAbsolute(d) && d.length <= 300 ? d : undefined;
+  const out = {};
+  if (ok(main)) out.main = main;
+  if (ok(dir)) out.default = path.resolve(dir);
+  const b = {};
+  for (const [g, d] of Object.entries(binds || {})) {
+    if (Object.keys(b).length >= 50) break;
+    if (ok(d)) b[g] = d;
+  }
+  out.binds = b;
+  return out;
+}
 
 // Working directory of a new main session: keep the old one, else config.dir, else runs/_main.
 function fixedCwd(dir, config, old) {

@@ -64,6 +64,8 @@ func (s *Server) routes() {
 	h("PATCH "+p+"/groups/{id}/members/{pid}", human, s.patchMember)
 	h("DELETE "+p+"/groups/{id}/members/{pid}", human|agentTok, s.deleteMember)
 	h("POST "+p+"/chats", human|agentTok|runCmd, s.openChat)
+	h("GET "+p+"/contacts", human|agentTok|runCmd, s.listContacts)
+	h("GET "+p+"/principals/{id}", human|agentTok|runCmd, s.getPrincipal)
 
 	h("GET "+p+"/groups/{id}/messages", anyone, s.getMessages)
 	h("POST "+p+"/groups/{id}/messages", anyone, s.sendMessage)
@@ -139,9 +141,9 @@ func (s *Server) describe(c *ctx) (any, error) {
 			"GET /groups/{id}/messages[?until=|before=|after=&limit=]",
 			"POST /groups/{id}/messages {text,mentions,replyTo,opKey,files,ignoreNew,until}",
 			"POST /groups/{id}/read {seq}", "DELETE /groups/{id}/messages/{seq}",
-			"POST /chats {with}", "POST /files (multipart file)", "GET /files/{id}",
+			"POST /chats {with}", "GET /contacts", "GET /principals/{id}", "POST /files (multipart file)", "GET /files/{id}",
 			"POST /mcp (MCP Streamable HTTP, Bearer agent/run token; tools: view_attachment, web_fetch, web_search)",
-			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?,listener?:{sha256,version,autoUpdate}}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
+			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?,listener?:{sha256,version,autoUpdate},dirs?:{main,default,binds:{groupId:dir}}}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
 		},
 		"tools": s.toolsInfo(),
 		"limits": obj{"sendPerMinute": 30, "hopLimit": hopLimit, "agentWakesPerOwnerPerHour": 30, "humanWakesPerAgentPerHour": 10,

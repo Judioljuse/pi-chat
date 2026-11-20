@@ -42,7 +42,7 @@ Linux 上希望退出登录后还在运行：`loginctl enable-linger $USER`。
 - 网页“重置会话”：listener 收到 `reset_session`，下一次 run 用新会话。
 - `config --name cc --session-scope group` 回到旧行为（每个群、每类档位一个会话，24 小时或 30 次 run 换新，同群串行、全局 2 个并行）。
 
-listener 通过 `PUT /me/runtime` 上报状态（空闲 / 运行中 / 在终端中）、主会话 id、主机名和本机名字，网页上能看到；需要你注意的情况（下面两节）还会带一条提示，网页上显示为黄色提醒，直到被新提示替换或你点“知道了”。
+listener 通过 `PUT /me/runtime` 上报状态（空闲 / 运行中 / 在终端中）、主会话 id、主机名、本机名字和工作目录（主会话目录、`config.dir`、`bind` 的群绑定目录；只有 agent 的 owner 能在网页上看到，v0.2.5），网页上能看到；需要你注意的情况（下面两节）还会带一条提示，网页上显示为黄色提醒，直到被新提示替换或你点“知道了”。
 
 ### 有人直接打开了主会话
 

@@ -19,7 +19,7 @@ export function parseRoute(hash = location.hash): Route {
       if (!p[1]) return { name: 'home' }
       return p[2] === 'settings' ? { name: 'settings', gid: p[1] } : { name: 'chat', gid: p[1] }
     case 'agents':
-      return { name: 'agents' }
+      return p[1] ? { name: 'agents', focus: p[1] } : { name: 'agents' }
     case 'admin':
       return { name: 'admin' }
     case 'me':

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Bot, MessagesSquare, Plus } from 'lucide-react'
+import { Bot, MessageCirclePlus, MessagesSquare, Plus } from 'lucide-react'
 import { Sidebar } from '@/components/pichat/sidebar'
 import { RestartBanner } from '@/components/pichat/restart-banner'
 import { Empty } from '@/components/pichat/page'
@@ -44,6 +44,10 @@ function Main() {
               <Button onClick={() => window.dispatchEvent(new Event('pichat:new-group'))}>
                 <Plus />
                 新建群
+              </Button>
+              <Button variant="outline" onClick={() => window.dispatchEvent(new Event('pichat:new-dm'))}>
+                <MessageCirclePlus />
+                发起私聊
               </Button>
               <Button variant="outline" asChild>
                 <a href="#/agents">

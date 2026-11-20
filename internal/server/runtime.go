@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Agent runtime: which local session the listener runs the agent in, and whether
@@ -81,6 +83,94 @@ type runtimeInfo struct {
 	State, Session, Host, Name, Notice string
 	At, NoticeAt                       int64
 	Listener                           *listenerReport
+	Dirs                               *runtimeDirs // nil: the listener never reported them (older listener)
+}
+
+// Limits on the work dirs a listener reports.
+const (
+	maxDirLen  = 300
+	maxDirBind = 50
+)
+
+// runtimeDirs is where the listener runs the agent: the main session's cwd, config.dir and per-group binds.
+// Only the agent's owner sees it.
+type runtimeDirs struct {
+	Main    string            `json:"main,omitempty"`
+	Default string            `json:"default,omitempty"`
+	Binds   map[string]string `json:"binds,omitempty"`
+}
+
+var bindKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// cleanDir returns s trimmed if it is a plausible absolute path (POSIX, C:\ or \\server) of at most
+// maxDirLen characters without control or format characters, else "".
+func cleanDir(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	if s == "" || utf8.RuneCountInString(s) > maxDirLen || !utf8.ValidString(s) {
+		return ""
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
+			return ""
+		}
+	}
+	abs := s[0] == '/' || strings.HasPrefix(s, `\\`) ||
+		len(s) >= 3 && (s[0]|0x20) >= 'a' && (s[0]|0x20) <= 'z' && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
+	if !abs {
+		return ""
+	}
+	return s
+}
+
+// parseDirs sanitizes a reported dirs object. ok is false when raw is absent or null (keep the stored value).
+// Non-string values, relative paths and bad group ids are dropped; at most maxDirBind binds are kept.
+func parseDirs(raw json.RawMessage) (d *runtimeDirs, ok bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false
+	}
+	var in struct {
+		Main, Default any
+		Binds         map[string]any
+	}
+	if json.Unmarshal(raw, &in) != nil {
+		return nil, false
+	}
+	d = &runtimeDirs{Main: cleanDir(in.Main), Default: cleanDir(in.Default)}
+	keys := make([]string, 0, len(in.Binds))
+	for k := range in.Binds {
+		if bindKeyRe.MatchString(k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if len(d.Binds) >= maxDirBind {
+			break
+		}
+		if dir := cleanDir(in.Binds[k]); dir != "" {
+			if d.Binds == nil {
+				d.Binds = map[string]string{}
+			}
+			d.Binds[k] = dir
+		}
+	}
+	return d, true
+}
+
+// dirsJSON is the owner-only view of the dirs (nil when never reported).
+func (s *Server) dirsJSON(d *runtimeDirs) any {
+	if d == nil {
+		return nil
+	}
+	binds := d.Binds
+	if binds == nil {
+		binds = map[string]string{}
+	}
+	return obj{"main": nullable(d.Main), "default": nullable(d.Default), "binds": binds}
 }
 
 // listenerReport is the listener script version a listener reports (sha256 prefix, server version it came from).
@@ -110,10 +200,10 @@ func (l *listenerReport) clean() *listenerReport {
 }
 
 func (s *Server) loadRuntime(id string) runtimeInfo {
-	var st, sess, host, name, notice, lis sql.NullString
+	var st, sess, host, name, notice, lis, dirs sql.NullString
 	var at, noticeAt sql.NullInt64
-	s.db.R.QueryRow(`SELECT runtime_state,main_session,runtime_host,runtime_name,runtime_at,runtime_notice,runtime_notice_at,runtime_listener FROM principals WHERE id=?`, id).
-		Scan(&st, &sess, &host, &name, &at, &notice, &noticeAt, &lis)
+	s.db.R.QueryRow(`SELECT runtime_state,main_session,runtime_host,runtime_name,runtime_at,runtime_notice,runtime_notice_at,runtime_listener,runtime_dirs FROM principals WHERE id=?`, id).
+		Scan(&st, &sess, &host, &name, &at, &notice, &noticeAt, &lis, &dirs)
 	rt := runtimeInfo{State: s.effectiveState(id, st.String), Session: sess.String, Host: host.String, Name: name.String, At: at.Int64,
 		Notice: notice.String, NoticeAt: noticeAt.Int64}
 	if lis.Valid {
@@ -121,6 +211,12 @@ func (s *Server) loadRuntime(id string) runtimeInfo {
 		if json.Unmarshal([]byte(lis.String), &l) == nil {
 			l.latest = len(l.Sha256) >= 12 && strings.HasPrefix(s.listenerSHA(), l.Sha256)
 			rt.Listener = &l
+		}
+	}
+	if dirs.Valid {
+		var d runtimeDirs
+		if json.Unmarshal([]byte(dirs.String), &d) == nil {
+			rt.Dirs = &d
 		}
 	}
 	return rt
@@ -160,9 +256,10 @@ func (r runtimeInfo) noticeAt() any {
 	return r.NoticeAt
 }
 
-func (r runtimeInfo) json() obj {
+// ownerJSON is the full runtime, for the agent's owner and the agent itself (includes the work dirs).
+func (s *Server) ownerJSON(r runtimeInfo) obj {
 	return obj{"state": r.State, "session": nullable(r.Session), "host": nullable(r.Host), "name": nullable(r.Name), "at": r.At,
-		"notice": nullable(r.Notice), "noticeAt": r.noticeAt(), "listener": r.listenerJSON()}
+		"notice": nullable(r.Notice), "noticeAt": r.noticeAt(), "listener": r.listenerJSON(), "dirs": s.dirsJSON(r.Dirs)}
 }
 
 // listenerJSON adds latest: whether the reported script matches the one this server serves (nil if never reported).
@@ -188,11 +285,11 @@ func (s *Server) broadcastAgent(id string) {
 	rt := s.loadRuntime(id)
 	var owner string
 	s.db.R.QueryRow(`SELECT COALESCE(owner_id,'') FROM principals WHERE id=?`, id).Scan(&owner)
-	ev := func(notice string) frame {
-		return encodeEvent(0, "agent", obj{"agentId": id, "state": rt.State, "session": nullable(rt.Session), "host": nullable(rt.Host), "name": nullable(rt.Name),
-			"notice": nullable(notice), "noticeAt": rt.noticeAt()})
-	}
-	full, public := ev(rt.Notice), ev(publicNotice(rt.Notice))
+	// Host, machine name and work dirs are owner-only; other members get state, session and the public notice.
+	full := encodeEvent(0, "agent", obj{"agentId": id, "state": rt.State, "session": nullable(rt.Session), "host": nullable(rt.Host), "name": nullable(rt.Name),
+		"notice": nullable(rt.Notice), "noticeAt": rt.noticeAt(), "dirs": s.dirsJSON(rt.Dirs)})
+	public := encodeEvent(0, "agent", obj{"agentId": id, "state": rt.State, "session": nullable(rt.Session),
+		"notice": nullable(publicNotice(rt.Notice)), "noticeAt": rt.noticeAt()})
 	for _, pid := range humans {
 		if pid == owner {
 			s.hub.sendHumans(pid, full)
@@ -225,6 +322,7 @@ func (s *Server) putRuntime(c *ctx) (any, error) {
 		State, Session, Host, Name string
 		Notice                     *string         // omitted: keep the current notice; "" clears it
 		Listener                   *listenerReport // omitted: keep the stored one
+		Dirs                       json.RawMessage // omitted or null: keep the stored one
 	}
 	if err := c.decode(&req); err != nil {
 		return nil, err
@@ -254,6 +352,12 @@ func (s *Server) putRuntime(c *ctx) (any, error) {
 				return err
 			}
 		}
+		if d, ok := parseDirs(req.Dirs); ok {
+			b, _ := json.Marshal(d)
+			if _, err := tx.Exec(`UPDATE principals SET runtime_dirs=? WHERE id=?`, string(b), c.a.ID); err != nil {
+				return err
+			}
+		}
 		if req.Notice == nil {
 			return nil
 		}
@@ -268,7 +372,7 @@ func (s *Server) putRuntime(c *ctx) (any, error) {
 		return nil, err
 	}
 	s.broadcastAgent(c.a.ID)
-	return obj{"runtime": s.loadRuntime(c.a.ID).json()}, nil
+	return obj{"runtime": s.ownerJSON(s.loadRuntime(c.a.ID))}, nil
 }
 
 // dismissNotice clears the agent's runtime notice (owner only).
@@ -285,7 +389,7 @@ func (s *Server) dismissNotice(c *ctx) (any, error) {
 		return nil, err
 	}
 	s.broadcastAgent(id)
-	return obj{"runtime": s.loadRuntime(id).json()}, nil
+	return obj{"runtime": s.ownerJSON(s.loadRuntime(id))}, nil
 }
 
 func (s *Server) resetSession(c *ctx) (any, error) {

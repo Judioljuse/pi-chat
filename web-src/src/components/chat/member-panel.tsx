@@ -46,7 +46,7 @@ export function MemberList({ info, meId, workingIds, onDone }: { info: Group; me
         </div>
         {list.map((m) => (
           <div key={m.id} className="group/row flex min-h-12 items-center gap-2.5 rounded-control px-2 py-1.5 hover:bg-accent">
-            <MemberLine m={m} working={workingIds.has(m.id)} stacked />
+            <MemberLine m={m} working={workingIds.has(m.id)} stacked profile />
             {m.id !== meId && info.kind !== 'dm' && (
               <Button
                 variant="ghost"

@@ -24,6 +24,7 @@ import type { GroupSummary } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { PLATFORM } from '@/lib/format'
 import { PrincipalAvatar } from './avatar'
+import { NewDmDialog } from './new-dm-dialog'
 import { NotifyBanner } from './notify-banner'
 
 export async function logout() {
@@ -43,6 +44,7 @@ export function Sidebar({ className }: { className?: string }) {
   const working = useStore((s) => s.working)
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
+  const [dming, setDming] = useState(false)
 
   const current = route.name === 'chat' || route.name === 'settings' ? route.gid : undefined
   const filtered = useMemo(() => {
@@ -70,11 +72,14 @@ export function Sidebar({ className }: { className?: string }) {
       }
     }
     const onNew = () => setCreating(true)
+    const onNewDm = () => setDming(true)
     window.addEventListener('keydown', onKey)
     window.addEventListener('pichat:new-group', onNew)
+    window.addEventListener('pichat:new-dm', onNewDm)
     return () => {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('pichat:new-group', onNew)
+      window.removeEventListener('pichat:new-dm', onNewDm)
     }
   }, [])
 
@@ -133,12 +138,21 @@ export function Sidebar({ className }: { className?: string }) {
               </div>
             ))}
           </div>
-        ) : groups.length === 0 ? (
-          <p className="px-3 pt-6 text-[13px] text-muted-foreground">还没有群。点右上角 + 建一个。</p>
         ) : (
           <>
+            {groups.length === 0 && <p className="px-3 pt-6 text-[13px] text-muted-foreground">还没有群。点右上角 + 建一个。</p>}
             <ListSection title="群聊" items={rooms} current={current} isWorking={isWorking} platformOf={platformOf} onlineOf={onlineOf} onAdd={() => setCreating(true)} />
-            <ListSection title="私聊" items={dms} current={current} isWorking={isWorking} platformOf={platformOf} onlineOf={onlineOf} />
+            <ListSection
+              title="私聊"
+              items={dms}
+              current={current}
+              isWorking={isWorking}
+              platformOf={platformOf}
+              onlineOf={onlineOf}
+              onAdd={() => setDming(true)}
+              addLabel="发起私聊"
+              keep={!q}
+            />
             {q && !rooms.length && !dms.length && <p className="px-3 pt-6 text-[13px] text-muted-foreground">没有匹配的会话</p>}
           </>
         )}
@@ -185,6 +199,7 @@ export function Sidebar({ className }: { className?: string }) {
       )}
 
       <NewGroupDialog open={creating} onOpenChange={setCreating} />
+      <NewDmDialog open={dming} onOpenChange={setDming} />
     </aside>
   )
 }
@@ -212,6 +227,8 @@ function ListSection({
   platformOf,
   onlineOf,
   onAdd,
+  addLabel = '新建群',
+  keep,
 }: {
   title: string
   items: GroupSummary[]
@@ -220,9 +237,12 @@ function ListSection({
   platformOf: (id: string) => string | null | undefined
   onlineOf: (id: string) => boolean | undefined
   onAdd?: () => void
+  addLabel?: string
+  /** Show the header (and its + button) even when the section is empty. */
+  keep?: boolean
 }) {
   const [open, setOpen] = useState(true)
-  if (!items.length) return null
+  if (!items.length && !keep) return null
   const unread = items.reduce((n, g) => n + (g.unread || 0), 0)
   return (
     <div className="pt-4">
@@ -242,8 +262,8 @@ function ListSection({
           <button
             type="button"
             onClick={onAdd}
-            aria-label="新建群"
-            title="新建群"
+            aria-label={addLabel}
+            title={addLabel}
             className="grid size-5 place-items-center rounded-chip opacity-0 transition-opacity group-hover/section:opacity-100 hover:bg-sidebar-accent hover:text-foreground focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
           >
             <Plus className="size-3.5" />

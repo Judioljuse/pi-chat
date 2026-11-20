@@ -3,6 +3,7 @@ import { ChevronLeft, Settings, UserPlus, Users } from 'lucide-react'
 import { AvatarGroup } from '@/components/motion/avatar-group'
 import { PrincipalAvatar } from '@/components/pichat/avatar'
 import { agentStateText } from '@/components/pichat/agent-state'
+import { ProfileTrigger } from '@/components/pichat/profile-card'
 import { InviteMembers } from '@/components/pichat/invite-members'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -59,14 +60,19 @@ export function ChatHeader({
               renderAvatar={(p) => {
                 const m = byId.get(p.id)!
                 return (
-                  <PrincipalAvatar
-                    id={m.id}
-                    name={memberName(m)}
-                    kind={m.kind}
-                    platform={m.platform}
-                    size="sm"
-                    className="[&>span:first-child]:ring-2 [&>span:first-child]:ring-card"
-                  />
+                  <ProfileTrigger
+                    seed={{ id: m.id, kind: m.kind, name: memberName(m), platform: m.platform, ownerName: m.ownerName }}
+                    className="block rounded-[7px]"
+                  >
+                    <PrincipalAvatar
+                      id={m.id}
+                      name={memberName(m)}
+                      kind={m.kind}
+                      platform={m.platform}
+                      size="sm"
+                      className="[&>span:first-child]:ring-2 [&>span:first-child]:ring-card"
+                    />
+                  </ProfileTrigger>
                 )
               }}
             />

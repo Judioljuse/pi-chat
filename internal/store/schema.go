@@ -182,4 +182,8 @@ ALTER TABLE principals ADD COLUMN runtime_notice_at INTEGER;
 	// 4: listener script version reported by the listener (JSON {sha256,version,autoUpdate}).
 	`
 ALTER TABLE principals ADD COLUMN runtime_listener TEXT;
+`,
+	// 5: listener work dirs (JSON {main,default,binds:{groupId:dir}}), shown only to the agent's owner.
+	`
+ALTER TABLE principals ADD COLUMN runtime_dirs TEXT;
 `}

@@ -148,6 +148,49 @@ export interface AgentRuntime {
   noticeAt?: number | null
   /** Listener script the listener reported; latest: same as the one this server serves. */
   listener?: { sha256: string; version: string; autoUpdate: boolean; skip?: 'git' | 'readonly' | null; latest: boolean } | null
+  /** Owner only: working directories the listener reported (absent on older listeners). */
+  dirs?: RuntimeDirs | null
+}
+
+/** Listener work dirs: main session cwd, config.dir, and per-group binds (groupId -> dir). */
+export interface RuntimeDirs {
+  main?: string | null
+  default?: string | null
+  binds?: Record<string, string> | null
+}
+
+/** Someone the caller can open a DM with (GET /contacts). */
+export interface Contact {
+  id: string
+  kind: 'human' | 'agent'
+  /** Login name, humans only. */
+  name?: string
+  displayName: string
+  platform?: Platform | null
+  ownerId?: string | null
+  ownerName?: string
+  online?: boolean
+  state?: AgentState
+}
+
+/** GET /principals/{id}. host, mainSession and dirs are only sent to the agent's owner. */
+export interface PrincipalProfile {
+  id: string
+  kind: 'human' | 'agent'
+  name?: string
+  displayName: string
+  platform?: Platform | null
+  ownerId?: string | null
+  ownerName?: string
+  intro?: string
+  online?: boolean
+  state?: AgentState
+  lastSeenAt?: number | null
+  commonGroups?: { id: string; name: string }[]
+  host?: string | null
+  mainSession?: string | null
+  dirs?: RuntimeDirs | null
+  disabled?: boolean
 }
 
 export interface UpdateRelease {

@@ -734,19 +734,13 @@ func (s *Server) openChat(c *ctx) (any, error) {
 		if tx.QueryRow(`SELECT id FROM groups WHERE dm_key=?`, key).Scan(&gid) == nil {
 			return nil
 		}
-		var kind, owner string
 		var disabled int
-		if err := tx.QueryRow(`SELECT kind,COALESCE(owner_id,''),disabled FROM principals WHERE id=? AND deleted_at IS NULL`, req.With).Scan(&kind, &owner, &disabled); err != nil || disabled != 0 {
+		if err := tx.QueryRow(`SELECT disabled FROM principals WHERE id=? AND deleted_at IS NULL`, req.With).Scan(&disabled); err != nil || disabled != 0 {
 			return errf(404, "not_found", "没有这个人")
 		}
-		myOwner := c.a.OwnerID
-		ok := (c.a.isHuman() && owner == c.a.ID) || (c.a.isAgent() && myOwner == req.With) ||
-			(c.a.isAgent() && kind == "agent" && owner == myOwner)
-		if !ok {
-			var n int
-			tx.QueryRow(`SELECT COUNT(*) FROM members a JOIN members b ON a.group_id=b.group_id JOIN groups g ON g.id=a.group_id
-				WHERE g.kind='group' AND a.principal_id=? AND b.principal_id=?`, c.a.ID, req.With).Scan(&n)
-			ok = n > 0
+		ok, err := s.canDM(tx, c.a, req.With)
+		if err != nil {
+			return err
 		}
 		if !ok {
 			return errf(403, "forbidden", "你们没有共同的群，不能私聊")

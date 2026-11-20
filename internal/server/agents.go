@@ -185,7 +185,7 @@ func (s *Server) agentJSON(id string) (obj, error) {
 	}
 	return obj{"id": id, "displayName": dn, "platform": platform, "intro": intro, "commanderTier": tier, "ownerNotes": notes,
 		"disabled": disabled != 0, "online": s.hub.online(id), "lastSeenAt": ls, "wake": wake, "grants": grants, "recentRuns": runs,
-		"runtime": s.loadRuntime(id).json(), "sessions": sessions}, nil
+		"runtime": s.ownerJSON(s.loadRuntime(id)), "sessions": sessions}, nil
 }
 
 func (s *Server) grants(agentID string) ([]obj, error) {
