@@ -2,7 +2,7 @@
 
 A small self-hosted group chat where people and their coding agents (Claude Code, pi) talk in the same groups.
 
-给自己和少数信任的人用的群聊：人和 AI agent（Claude Code、pi）在同一个群里说话。@ 某个 agent 时，它所在机器上的 listener 会在本机启动 `claude -p` 或 `pi -p` 处理，再把回答发回群里。
+给自己和少数信任的人用的群聊：人和 AI agent（Claude Code、pi、Codex）在同一个群里说话。@ 某个 agent 时，它所在机器上的 listener 会在本机启动 `claude -p`、`pi -p` 或 `codex exec` 处理，再把回答发回群里。
 
 - 服务端：一个 Go 二进制 `pichat`（SQLite，网页打包在二进制里），无外部依赖。
 - 网页：手机优先，hash 路由，SSE 实时更新。
@@ -100,7 +100,7 @@ sudo tailscale serve --bg 8080               # 通过 tailnet 的 HTTPS 访问
 ## 接入 agent
 
 1. 网页“我的 agent” → “添加 agent”，可选一个要自动加入的群，得到配对码（30 分钟、1 次）和一段给 agent 的说明。
-2. 在 agent 所在的机器上（需要 Node ≥ 18，并且 `claude -p` 或 `pi -p` 在命令行能直接跑通）：
+2. 在 agent 所在的机器上（需要 Node ≥ 18，并且 `claude -p`、`pi -p` 或 `codex exec` 在命令行能直接跑通）：
 
 ```sh
 mkdir -p ~/.pichat
@@ -110,6 +110,8 @@ curl -fsSL https://pichat.<tailnet>.ts.net/pichat-listen.mjs -o ~/.pichat/pichat
 node ~/.pichat/pichat-listen.mjs pair K7QX-M2PA --server https://pichat.<tailnet>.ts.net --name cc --agent claude --dir ~/code/myproj
 # 或 pi
 node ~/.pichat/pichat-listen.mjs pair K7QX-M2PA --server https://pichat.<tailnet>.ts.net --name pibot --agent pi --dir ~/code/myproj
+# 或 Codex（非指挥者 @ 时不运行，只回一句固定的话，见下面“能力对照”）
+node ~/.pichat/pichat-listen.mjs pair K7QX-M2PA --server https://pichat.<tailnet>.ts.net --name cx --agent codex --dir ~/code/myproj
 
 node ~/.pichat/pichat-listen.mjs run --name cc        # 前台试跑，在群里 @cc 看看
 node ~/.pichat/pichat-listen.mjs install --name cc    # 装成后台服务（Linux：systemd --user；macOS：launchd）
@@ -141,6 +143,23 @@ loginctl enable-linger $USER                          # Linux：退出登录后�
 | full | owner 在网页上把这个 agent 切到 full（会二次确认） | `--dangerously-skip-permissions`（root 下自动降为 project） | 同 project |
 
 注意：project 档的“只在项目目录里工作”靠工作目录和 prompt 约束，不是沙箱。Claude 仍会读取你的 `~/.claude/settings.json` 等权限设置，Bash 也能访问目录外的文件。只授权你信任的人。listener 本机可以用 `config --max-tier restricted|project` 设置上限。
+
+Codex agent 的档位不同，见下一节。
+
+## 能力对照
+
+| | Claude Code | pi | Codex |
+|-|-|-|-|
+| restricted 档（非指挥者 @） | 运行，只有 pichat 的三个只读工具 | 运行，只有 pichat 的三个工具 | 不运行：只回一句“我是 Codex agent，只执行 owner 或被授权的人的指令；需要的话请他们 @ 我。”（Codex 没有无工具的模式，read-only 沙箱也能读你能读的所有文件）。本机 `--max-tier restricted` 时指挥者 @ 也不运行，回复一句说明是本机上限 |
+| project 档 | 核心工具免确认，不是沙箱 | 全部工具，不是沙箱 | `-s workspace-write`：可以读本机文件，只能写工作目录（和群绑定目录），沙箱里的命令不能联网 |
+| full 档 | `--dangerously-skip-permissions` | 同 project | `--dangerously-bypass-approvals-and-sandbox`，完全放开 |
+| pichat MCP 工具 | 临时 `--mcp-config` 文件 | 临时扩展 | `-c mcp_servers.pichat.*`，run token 只放在环境变量 `PICHAT_MCP_TOKEN` 里，不写文件 |
+| 中途发消息（`send` / `api`） | project / full | project / full | 只有 full（project 档沙箱不能联网，靠最终回答回复） |
+| 终端模式 | `attach`、`watch` | `attach`、`watch` | `attach`（`codex resume <主会话>`，沙箱按指挥档位）、`watch` |
+| 外部使用检测 | 会话登记 + 命令行 | 只看命令行（`pi -c` 看不到） | 只看命令行（`codex resume <id>`、`codex exec resume <id>`；`--last` 和会话选择器看不到） |
+| 会话分叉 | 检测并切回后台分支 | 只检测并提示 | 不支持 |
+
+Codex 的命令参数和验证过的版本见 `listener/README.md`。
 
 prompt 里指挥者的消息带一个每次 run 随机生成的暗号标记，其他人在昵称或正文里伪造的标记不会生效。
 

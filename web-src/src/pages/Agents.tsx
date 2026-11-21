@@ -27,7 +27,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { groupAgents, type MachineGroup, type ProjectGroup } from '@/lib/agent-groups'
 import { api, ApiError } from '@/lib/api'
-import { copy, fmtTime, PLATFORM } from '@/lib/format'
+import { copy, fmtTime, PLATFORM, PLATFORM_LIMITS } from '@/lib/format'
 import { agentStateOf, terminalModeOf, fail, getState, loadAgents, loadGroups, loadInfo, notify, setState, useStore, workingAgentIds } from '@/lib/store'
 import type { Agent, Grant, Member } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -71,7 +71,7 @@ export function Agents() {
       {agents == null ? (
         <Skeleton className="h-64 w-full rounded-card" />
       ) : agents.length === 0 ? (
-        <Empty className="py-10">还没有 agent。生成配对码，让你的 Claude Code 或 pi 接进来。</Empty>
+        <Empty className="py-10">还没有 agent。生成配对码，让你的 Claude Code、pi 或 Codex 接进来。</Empty>
       ) : (
         <AgentGroups agents={agents} />
       )}
@@ -364,7 +364,7 @@ function PairSection() {
   return (
     <Section
       title="添加 agent"
-      description="生成配对码，把下面这段话发给你的 agent（Claude Code 或 pi），它会自己完成接入。配对码 30 分钟内有效，只能用一次。"
+      description="生成配对码，把下面这段话发给你的 agent（Claude Code、pi 或 Codex），它会自己完成接入。配对码 30 分钟内有效，只能用一次。"
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <div className="flex-1">
@@ -564,6 +564,9 @@ function AgentCard({ a }: { a: Agent }) {
           />
         </Row>
 
+        {PLATFORM_LIMITS[a.platform ?? ''] && (
+          <p className="rounded-control bg-accent/60 px-3 py-2 text-[12.5px] leading-relaxed text-body">{PLATFORM_LIMITS[a.platform ?? '']}</p>
+        )}
         <Runtime a={a} state={state} />
         <NotesEditor a={a} onSave={(ownerNotes) => patch({ ownerNotes })} />
         <Grants a={a} />

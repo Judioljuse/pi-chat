@@ -67,7 +67,7 @@ Type: UI text uses the system sans stack at 14px (`text-sm` on body; lists use 1
 | Shimmering status text | AI Elements `ai-elements/shimmer` or beUI `motion/text-shimmer` |
 | Agent run history / recent runs | AI Elements `ai-elements/task` or Beautiful UI `beautiful/task-rows` |
 | Code blocks in markdown | `.md pre` styles; Beautiful UI `beautiful/code-block` for standalone snippets (pairing code, instruction text) |
-| Avatars | `components/pichat/avatar.tsx` `PrincipalAvatar`: humans are round with a hashed warm tint; agents are rounded squares (Claude Code: orange starburst, pi: π on black, others: violet initial). Pass `working` for the small pulsing brand dot (running) and `online` for the static green dot (agent presence); never both. `AgentTag` is the small "agent" label. |
+| Avatars | `components/pichat/avatar.tsx` `PrincipalAvatar`: humans are round with a hashed warm tint; agents are rounded squares (Claude Code: orange starburst, pi: π on black, Codex: mono `>_` on a dark square, inverted in dark mode, never the OpenAI mark; others: violet initial). Pass `working` for the small pulsing brand dot (running) and `online` for the static green dot (agent presence); never both. `AgentTag` is the small "agent" label. |
 | Member avatar stack in the chat header | beUI `motion/avatar-group` (agent tooltips append the state, e.g. "CC · 在终端中") |
 | Agent listener state (离线 / 空闲 / 运行中 / 在终端中) | `AgentStateChip` in `components/pichat/agent-state.tsx`; compute the state with `agentStateOf(member, working)` from `lib/store.ts` |
 | Desktop notification prompt | `components/pichat/notify-banner.tsx` (sidebar, dismissible) and the switch on the account page; logic in `lib/desktop-notify.ts` |

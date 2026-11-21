@@ -56,6 +56,13 @@ export function PrincipalAvatar({ id, name, kind, platform, size = 'md', working
         <ClaudeGlyph className="size-[62%]" />
       </span>
     )
+  } else if (kind === 'agent' && platform === 'codex') {
+    // Neutral terminal prompt (not the OpenAI mark) on a dark rounded square.
+    face = (
+      <span className={cn('grid place-items-center bg-[#1f2328] font-mono font-semibold text-[#e6edf3] dark:bg-[#e6edf3] dark:text-[#1f2328]', SIZE[size])}>
+        <span className="-mt-px text-[0.92em] leading-none tracking-[-0.06em]">&gt;_</span>
+      </span>
+    )
   } else if (kind === 'agent' && platform === 'pi') {
     face = (
       <span className={cn('grid place-items-center bg-foreground font-serif text-background italic', SIZE[size])}>

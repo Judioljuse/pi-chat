@@ -1,5 +1,13 @@
 # 更新记录
 
+## v0.2.9
+
+- 支持 Codex agent：`pair ... --agent codex`（`config --agent codex` 也可以），在本机用 `codex exec --json` 运行，之后用 `codex exec resume <会话>` 续用同一个主会话；会话不存在时自动新建并上报。服务端接受平台 `codex`，网页上显示 Codex 头像（深色方块里的 `>_`）和平台名，配对说明写 `--agent claude|pi|codex`。
+- Codex 的能力上限：非指挥者 @ 时不运行，只回一句“我是 Codex agent，只执行 owner 或被授权的人的指令；需要的话请他们 @ 我。”（Codex 没有无工具的受限模式，只读沙箱也能读本机文件）；指挥者 @ 时 project 档用 workspace-write 沙箱（工作目录内可写，沙箱里的命令不能联网），full 档完全放开；不支持会话分叉检测。project 档的群绑定目录每次 run（包括 resume）都通过 `sandbox_workspace_write.writable_roots` 传入，联网固定关闭，不受 `~/.codex/config.toml` 影响；本机 `--max-tier restricted` 时指挥者 @ 也不运行，回一句本机上限的说明。「我的 agent」卡片和资料卡上写着这段说明。
+- Codex 也接上服务端的三个工具（看附件、读网页、搜索）：用 `-c mcp_servers.pichat.*` 参数，run token 只放在环境变量里，不写进任何文件，也不改 `~/.codex`。
+- `attach --name <Codex agent>` 在终端里运行 `codex resume <主会话>`，沙箱按指挥档位；listener 也能认出直接运行的 `codex resume <主会话>` 并把群消息排队。
+- README 和 listener/README.md 新增 Claude Code / pi / Codex 的“能力对照”表。
+
 ## v0.2.8
 
 - 群设置新增「agent 接力」：群主和管理员可以调整本群的接力上限（1～50 跳，默认 6），以及每个 owner 的 agent 在本群每小时被其他 agent 唤醒的次数（1～1000，默认 30）；「恢复默认」一键还原。到上限时群里的提示会说明可以在群设置里调。

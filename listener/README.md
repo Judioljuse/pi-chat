@@ -1,6 +1,6 @@
 # pichat listener
 
-`pichat-listen.mjs` 运行在 agent 所在的机器上：连着 pichat 服务端的 SSE，agent 被 @、被回复或收到私聊时，在本机启动 Claude Code 或 pi 处理，再把回答发回群里。单文件，零依赖，需要 Node ≥ 18。
+`pichat-listen.mjs` 运行在 agent 所在的机器上：连着 pichat 服务端的 SSE，agent 被 @、被回复或收到私聊时，在本机启动 Claude Code、pi 或 Codex 处理，再把回答发回群里。单文件，零依赖，需要 Node ≥ 18。
 
 ## 安装
 
@@ -9,7 +9,9 @@ mkdir -p ~/.pichat
 curl -fsSL https://<你的 pichat 地址>/pichat-listen.mjs -o ~/.pichat/pichat-listen.mjs
 ```
 
-本机需要已经装好并配置好 `claude`（Claude Code）或 `pi`，命令行能直接跑 `claude -p` / `pi -p`。
+本机需要已经装好并配置好 `claude`（Claude Code）、`pi` 或 `codex`（Codex CLI），命令行能直接跑 `claude -p` / `pi -p` / `codex exec`。
+
+Codex：`--agent codex`。下面“能力对照”一节写了它和 Claude Code、pi 的区别，最重要的一条：非指挥者 @ 时 Codex 不运行，只回一句固定的话。
 
 ## 配对
 
@@ -146,12 +148,12 @@ node ~/.pichat/pichat-listen.mjs config --name cc --max-tier project --model son
 ```
 
 - `--max-tier restricted|project|full`：本机上限，服务端给的档位超过它就降级。默认 `full`（不额外限制）。
-- `--agent claude|pi`、`--model <m>`（`-` 清空）、`--dir <d>`（`-` 清空）、`--session-scope agent|group`。
+- `--agent claude|pi|codex`、`--model <m>`（`-` 清空）、`--dir <d>`（`-` 清空）、`--session-scope agent|group`。
 - `--auto-update on|off`：服务端的 listener 脚本变了时，空闲后自动下载（校验 sha256）、替换本脚本并重启。默认 `on`。脚本在 git 仓库里时不自动更新；脚本或目录不可写时在网页上提示。`install` 写的服务带 `PICHAT_SUPERVISED=1`，更新后以退出码 75 退出，由 systemd / launchd 重启；前台运行时自己拉起新进程。最多每 10 分钟更新一次。
 
 状态目录 `~/.pichat/agents/<名字>/`（0700）：`config.json`、`token`（0600）、`state.json`（主会话 `main`、旧模式的 `sessions`、每日计数、重试）、`attach.lock` / `running.json`（attach 时）、`runs/_main/`（没有 `--dir` 时的主会话目录）、`runs/<groupId>/`（旧模式受限档目录）、`forks/`（分叉时会话文件的备份）、`mcp/`（每次 run 临时的 MCP 配置，run 结束删除）、`listen.log`。
 
-环境变量：`PICHAT_HOME` 改状态根目录（默认 `~/.pichat`），`PICHAT_CLAUDE_BIN` / `PICHAT_PI_BIN` 指定 agent 可执行文件（测试用）。
+环境变量：`PICHAT_HOME` 改状态根目录（默认 `~/.pichat`），`PICHAT_CLAUDE_BIN` / `PICHAT_PI_BIN` / `PICHAT_CODEX_BIN` 指定 agent 可执行文件（测试用）。
 
 ## env 文件
 
@@ -171,6 +173,30 @@ ANTHROPIC_AUTH_TOKEN=sk-...
 | restricted | 非指挥者 @ | 只有 pichat 的三个只读工具（`--mcp-config <临时文件> --tools "" --strict-mcp-config --setting-sources "" --permission-mode dontAsk --allowedTools "mcp__pichat__view_attachment mcp__pichat__web_fetch mcp__pichat__web_search"`），续用主会话，目录不变 | 只有 pichat 的三个工具（`--no-extensions --no-mcp -e <临时扩展> --tools 'mcp__pichat__*' --no-skills --no-context-files`；临时扩展自己起一个只认 pichat 的 MCP 实例，不读 `mcp.json` / `.pi/mcp.json`，那里配置的服务器不会启动） |
 | project | 指挥者 @（默认） | `--mcp-config <临时文件> --permission-mode acceptEdits --strict-mcp-config --allowedTools "Bash Read Edit Write … mcp__pichat__…"`：只加载 pichat 的 MCP，核心工具（含 Bash）免确认；仍会读取你的 Claude 用户/项目设置，工作目录是项目目录但 Bash 并不被沙箱限制在其中 | 全部工具（pi 没有权限系统）加 pichat 的三个工具，在项目目录里工作 |
 | full | owner 在网页上把 agent 改成 full | `--mcp-config <临时文件> --dangerously-skip-permissions`（root 下自动降为 project） | 同 project |
+
+Codex 的档位见下一节“能力对照”。
+
+## 能力对照
+
+| | Claude Code | pi | Codex |
+|-|-|-|-|
+| restricted 档（非指挥者 @） | 运行，只有 pichat 的三个只读工具 | 运行，只有 pichat 的三个工具 | 不运行：只回一句“我是 Codex agent，只执行 owner 或被授权的人的指令；需要的话请他们 @ 我。”（Codex 没有无工具的模式，read-only 沙箱也能读你能读的所有文件）。本机 `--max-tier restricted` 时指挥者 @ 也不运行，回复一句说明是本机上限 |
+| project 档 | 核心工具免确认，不是沙箱 | 全部工具，不是沙箱 | `-s workspace-write`：可以读本机文件，只能写工作目录（和群绑定目录），沙箱里的命令不能联网 |
+| full 档 | `--dangerously-skip-permissions` | 同 project | `--dangerously-bypass-approvals-and-sandbox`，完全放开 |
+| pichat MCP 工具 | 临时 `--mcp-config` 文件 | 临时扩展 | `-c mcp_servers.pichat.*`，run token 只放在环境变量 `PICHAT_MCP_TOKEN` 里，不写文件 |
+| 中途发消息（`send` / `api`） | project / full | project / full | 只有 full（project 档沙箱不能联网，靠最终回答回复） |
+| 终端模式 | `attach`、`watch` | `attach`、`watch` | `attach`（`codex resume <主会话>`，沙箱按指挥档位）、`watch` |
+| 外部使用检测 | 会话登记 + 命令行 | 只看命令行（`pi -c` 看不到） | 只看命令行（`codex resume <id>`、`codex exec resume <id>`；`--last` 和会话选择器看不到） |
+| 会话分叉 | 检测并切回后台分支 | 只检测并提示 | 不支持 |
+
+Codex 的细节（codex-cli 0.168.0 上验证）：
+
+- 命令：新会话 `codex exec --json --skip-git-repo-check -s workspace-write [-c sandbox_workspace_write.writable_roots=[<绑定目录>]] -c sandbox_workspace_write.network_access=false <MCP 参数> [-m <model>] -`（prompt 从 stdin 传入）；之后 `codex exec resume <thread_id> --json --skip-git-repo-check -c sandbox_mode="workspace-write" <同样的 writable_roots / network_access> <MCP 参数> -`（`exec resume` 不接受 `-s` 和 `--add-dir`，所以绑定目录每次都用 `writable_roots` 传；联网固定关闭，不受 `~/.codex/config.toml` 影响）。full 档把沙箱参数换成 `--dangerously-bypass-approvals-and-sandbox`。
+- 主会话 id 是 Codex 第一次 run 输出的 `thread_id`（之前网页上没有主会话 id）。工作目录固定。resume 报会话不存在时新建会话，并上报新的主会话。
+- 回答取 JSONL 里最后一条 `agent_message`。`error` 条目里的配置警告（“Codex is ignoring … unrecognized configuration settings”、hooks 提示）不算失败。
+- MCP 参数：`-c mcp_servers.pichat.url="<server>/mcp" -c mcp_servers.pichat.bearer_token_env_var="PICHAT_MCP_TOKEN" -c mcp_servers.pichat.enabled_tools=[…三个工具…] -c mcp_servers.pichat.default_tools_approval_mode="approve"`。这些只在本次 run 的命令行上生效，listener 不写 `~/.codex`。MCP 调用由 Codex 进程自己发出，不受沙箱的网络限制。你在 `~/.codex/config.toml` 里配的其他 MCP 服务器、模型和提供方照常加载。
+- `attach --name <名字>` 运行 `codex resume <主会话>`：指挥档位是 project 时带 `-s workspace-write`，full 时带 `--dangerously-bypass-approvals-and-sandbox`。还没有主会话（指挥者还没 @ 过它）时 attach 会拒绝。
+- 会话文件在 `~/.codex/sessions/YYYY/MM/DD/rollout-<时间>-<thread_id>.jsonl`，listener 不读它，所以不做分叉检测。
 
 服务端是旧版本（`GET /mcp` 返回 404）时不接 MCP，各档位参数和 v0.2.2 一样（restricted 档完全没有工具，pi 用 `--no-tools --no-extensions --no-mcp`）。
 

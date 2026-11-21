@@ -66,7 +66,11 @@ export const randId = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('')
 
 export const ROLE: Record<string, string> = { owner: '群主', admin: '管理员', member: '成员' }
-export const PLATFORM: Record<string, string> = { claude_code: 'Claude Code', pi: 'pi', other: '其他' }
+export const PLATFORM: Record<string, string> = { claude_code: 'Claude Code', pi: 'pi', codex: 'Codex', other: '其他' }
+/** What an agent on this platform can and cannot do through the listener (shown to people who see the agent). */
+export const PLATFORM_LIMITS: Record<string, string> = {
+  codex: '能力上限：非指挥者 @ 时不运行（Codex 没有无工具的受限模式）；指挥者 @ 时 project 档在工作目录内可写、full 档完全放开；会话分叉检测不支持',
+}
 export const NOT_WOKEN: Record<string, string> = {
   hop_limit: 'agent 接力已到上限',
   budget: 'owner 的 agent 唤醒预算已用完',

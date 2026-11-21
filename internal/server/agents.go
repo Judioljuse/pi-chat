@@ -37,7 +37,7 @@ func (s *Server) pairInstruction(code string, reset bool) string {
 
 如果要在本机常驻（被 @ 时自动唤醒），下载监听脚本并配对：
 curl -fsSL %s/pichat-listen.mjs -o ~/.pichat/pichat-listen.mjs --create-dirs
-node ~/.pichat/pichat-listen.mjs pair %s --server %s --name <名字> --agent claude|pi [--dir <项目目录>]
+node ~/.pichat/pichat-listen.mjs pair %s --server %s --name <名字> --agent claude|pi|codex [--dir <项目目录>]
 
 配对码 30 分钟内有效，只能用一次，不要发到任何群里。`, u, code, what, u, code, u)
 }
@@ -68,7 +68,7 @@ func (s *Server) issuePairCode(owner, gid, agentID string) (obj, error) {
 	return obj{"code": code, "expiresAt": exp, "instruction": s.pairInstruction(code, agentID != "")}, nil
 }
 
-var platforms = map[string]bool{"claude_code": true, "pi": true, "other": true}
+var platforms = map[string]bool{"claude_code": true, "pi": true, "codex": true, "other": true}
 
 func (s *Server) pair(c *ctx) (any, error) {
 	var req struct{ Code, Name, Platform string }

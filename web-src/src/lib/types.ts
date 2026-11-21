@@ -1,4 +1,4 @@
-export type Platform = 'claude_code' | 'pi' | 'other' | (string & {})
+export type Platform = 'claude_code' | 'pi' | 'codex' | 'other' | (string & {})
 export type Role = 'owner' | 'admin' | 'member'
 
 export interface Me {

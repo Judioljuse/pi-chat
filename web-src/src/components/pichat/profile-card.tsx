@@ -6,7 +6,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '@/components/ui/skeleton'
 import { api, ApiError } from '@/lib/api'
 import { startDm } from '@/lib/dm'
-import { copy, fmtTime, PLATFORM } from '@/lib/format'
+import { copy, fmtTime, PLATFORM, PLATFORM_LIMITS } from '@/lib/format'
 import { useMedia } from '@/lib/hooks/use-media'
 import { navigate } from '@/lib/router'
 import { agentStateOf, fail, terminalModeOf, useStore, workingAgentIds } from '@/lib/store'
@@ -180,6 +180,9 @@ function ProfileBody({ seed, onDone }: { seed: ProfileSeed; onDone: () => void }
         )}
         {err && <p className="text-[12.5px] text-muted-foreground">{err}</p>}
         {p?.intro && <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words text-body">{p.intro}</p>}
+        {isAgent && platform && PLATFORM_LIMITS[platform] && (
+          <p className="text-[12px] leading-relaxed text-muted-foreground">{PLATFORM_LIMITS[platform]}</p>
+        )}
         {rows.length > 0 && (
           <dl className="flex flex-col gap-1.5 text-[12.5px]">
             {rows.map(([k, v]) => (
