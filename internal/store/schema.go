@@ -196,4 +196,9 @@ CREATE TABLE agent_group_names (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (owner_id, key)
 ) STRICT;
+`,
+	// 7: per-group agent relay limits set by the group's owner/admins (NULL = server default).
+	`
+ALTER TABLE groups ADD COLUMN hop_limit INTEGER;
+ALTER TABLE groups ADD COLUMN agent_wakes_per_hour INTEGER;
 `}

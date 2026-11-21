@@ -113,6 +113,8 @@ export function GroupSettings({ gid }: { gid: string }) {
     <Page title={isDm ? '私聊信息' : '群设置'} back={`#/g/${gid}`}>
       {!isDm && <InfoForm key={info.name + '\n' + info.topic} info={info} manage={manage} />}
 
+      {!isDm && info.limits && <RelayLimits key={`${info.limits.hopLimit}/${info.limits.agentWakesPerHour}`} info={info} manage={manage} />}
+
       {!isDm && (
         <Section title="邀请成员">
           <InviteMembers info={info} />
@@ -251,6 +253,63 @@ function InfoForm({ info, manage }: { info: Group; manage: boolean }) {
               保存
             </Button>
           </div>
+        )}
+      </form>
+    </Section>
+  )
+}
+
+function RelayLimits({ info, manage }: { info: Group; manage: boolean }) {
+  const lim = info.limits!
+  const [hop, setHop] = useState(String(lim.hopLimit))
+  const [wakes, setWakes] = useState(String(lim.agentWakesPerHour))
+  const [busy, setBusy] = useState(false)
+  const dirty = Number(hop) !== lim.hopLimit || Number(wakes) !== lim.agentWakesPerHour
+  const save = async (body: { hopLimit: number; agentWakesPerHour: number }, msg: string) => {
+    setBusy(true)
+    try {
+      await api('PATCH', `/groups/${info.id}`, body)
+      notify(msg)
+      await loadInfo(info.id).catch(() => {})
+    } catch (err) {
+      fail(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    const h = Math.trunc(Number(hop)), w = Math.trunc(Number(wakes))
+    if (!(h >= 1 && h <= 50) || !(w >= 1 && w <= 1000)) return fail(new Error('接力上限 1～50 跳，每小时唤醒 1～1000 次'))
+    save({ hopLimit: h, agentWakesPerHour: w }, '已保存')
+  }
+  return (
+    <Section
+      title="agent 接力"
+      description="agent 之间互相 @ 时，每传一次算一跳，到上限后需要人 @ 才能继续；每个 owner 的 agent 在本群每小时被其他 agent 唤醒的次数也有上限。调高可以让 agent 协作更久，也会用掉更多模型额度。"
+    >
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="接力上限（跳）" htmlFor="g-hop" hint="1～50，默认 6">
+            <Input id="g-hop" type="number" inputMode="numeric" min={1} max={50} value={hop} disabled={!manage} onChange={(e) => setHop(e.target.value)} />
+          </Field>
+          <Field label="每小时唤醒次数" htmlFor="g-wakes" hint="1～1000，默认 30">
+            <Input id="g-wakes" type="number" inputMode="numeric" min={1} max={1000} value={wakes} disabled={!manage} onChange={(e) => setWakes(e.target.value)} />
+          </Field>
+        </div>
+        {manage ? (
+          <div className="flex gap-2">
+            <Button type="submit" disabled={busy || !dirty}>
+              保存
+            </Button>
+            {!lim.default && (
+              <Button type="button" variant="outline" disabled={busy} onClick={() => save({ hopLimit: 0, agentWakesPerHour: 0 }, '已恢复默认')}>
+                恢复默认
+              </Button>
+            )}
+          </div>
+        ) : (
+          <p className="text-[12.5px] text-muted-foreground">只有群主和管理员可以修改</p>
         )}
       </form>
     </Section>

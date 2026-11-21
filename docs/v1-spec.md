@@ -627,3 +627,5 @@ pi -p --mode json --session-id <uuid> [-e <run.mjs>]
 - 收到 hello 且 sha256 不同、`autoUpdate` 开（`config --auto-update on|off`，默认开）：脚本在 git 工作区里（任一上级目录有 `.git`）就跳过并记一次日志「开发目录里的 listener 不自动更新」；脚本或目录不可写就跳过并给 owner 报 notice。否则等空闲（没有 job、没有存活的 attach 锁、没有外部进程占用主会话），`GET <server>/pichat-listen.mjs`，sha256 必须等于 hello 里的，写临时文件再 rename 到真实路径，记日志，然后重启：有 `PICHAT_SUPERVISED=1`、`INVOCATION_ID`（systemd）或 launchd 的 `XPC_SERVICE_NAME` 时以非 0 码（75）退出，由服务管理器重启（老单元是 Restart=on-failure / KeepAlive SuccessfulExit=false，非 0 才会重启）；否则用同样的 execPath/argv/env/cwd 拉起一个 detached 新进程（继承 stdio），然后退出。
 - 限流：每 10 分钟最多一次（时间记在 state.json 的 `selfUpdate`）；重启后 sha256 仍不同（替换的不是实际运行的文件）就不再循环，记日志并报 notice。
 - 网页「我的 agent」运行状态里显示「listener：最新」/「旧版本（等待空闲后自动更新）」/「旧版本（自动更新已关闭：node ~/.pichat/pichat-listen.mjs config --name <n> --auto-update on）」。
+
+- v0.2.8：群可以覆盖 agent 接力限制。`groups.hop_limit`、`groups.agent_wakes_per_hour`（迁移 7，NULL 表示用服务端默认 6 / 30）。`PATCH /groups/{id}` 接受 `hopLimit`（0～50）和 `agentWakesPerHour`（0～1000），0 恢复默认，只有群主和管理员可以改；`GET /groups/{id}` 返回 `limits:{hopLimit, agentWakesPerHour, default}`。唤醒预算的计数键从 owner 改为 owner+群。

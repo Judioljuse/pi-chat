@@ -43,6 +43,7 @@ func (w *waker) dispatch(author *actor, gid string, seq, hop int64, targets []ta
 		byID[m.id] = m
 	}
 	hopNoticed := false
+	maxHop, maxWakes := s.groupLimits(s.db.R, gid)
 	for _, t := range targets {
 		m, ok := byID[t.id]
 		if !ok || m.kind != "agent" || t.id == author.ID {
@@ -53,15 +54,15 @@ func (w *waker) dispatch(author *actor, gid string, seq, hop int64, targets []ta
 			skip("disabled")
 			continue
 		}
-		if hop >= hopLimit {
+		if hop >= int64(maxHop) {
 			skip("hop_limit")
 			if !hopNoticed {
 				hopNoticed = true
-				s.hopLimitNotice(gid)
+				s.hopLimitNotice(gid, maxHop)
 			}
 			continue
 		}
-		if author.isAgent() && !s.rl.allow("budget:"+m.owner, 30, time.Hour) {
+		if author.isAgent() && !s.rl.allow(budgetKey(m.owner, gid), maxWakes, time.Hour) {
 			skip("budget")
 			continue
 		}
@@ -187,7 +188,7 @@ func (s *Server) deliverWebhook(agentID, url, secret string, payload obj) {
 		kind=CASE WHEN fail_streak+1>=5 THEN 'none' ELSE kind END WHERE agent_id=?`, msg, agentID)
 }
 
-func (s *Server) hopLimitNotice(gid string) {
+func (s *Server) hopLimitNotice(gid string, limit int) {
 	s.hopMu.Lock()
 	last, ok := s.hopNotice[gid]
 	if ok && time.Since(last) < 10*time.Minute {
@@ -197,8 +198,32 @@ func (s *Server) hopLimitNotice(gid string) {
 	s.hopNotice[gid] = time.Now()
 	s.hopMu.Unlock()
 	if err := s.tx(func(tx *sql.Tx, after *[]func()) error {
-		return s.systemMessage(tx, after, gid, fmt.Sprintf("agent 之间的接力已到上限（%d 跳），需要人类 @ 才能继续", hopLimit))
+		return s.systemMessage(tx, after, gid, fmt.Sprintf("agent 之间的接力已到上限（%d 跳），需要人类 @ 才能继续；群主或管理员可以在群设置里调整上限", limit))
 	}); err != nil {
 		s.log.Error("hop notice", "err", err)
 	}
 }
+
+// Relay limits: groups may override the server defaults (群设置 → agent 接力).
+const (
+	maxHopLimit       = 50
+	maxAgentWakesHour = 1000
+)
+
+// groupLimits returns the hop limit and the per-owner hourly agent-wake budget for gid.
+func (s *Server) groupLimits(q querier, gid string) (hop, wakes int) {
+	var h, w sql.NullInt64
+	q.QueryRow(`SELECT hop_limit, agent_wakes_per_hour FROM groups WHERE id=?`, gid).Scan(&h, &w)
+	hop, wakes = hopLimit, agentWakesPerHour
+	if h.Valid && h.Int64 > 0 {
+		hop = int(h.Int64)
+	}
+	if w.Valid && w.Int64 > 0 {
+		wakes = int(w.Int64)
+	}
+	return hop, wakes
+}
+
+// budgetKey counts agent-triggered wakes per owner and group, so one busy group's limit
+// doesn't starve the owner's agents elsewhere.
+func budgetKey(owner, gid string) string { return "budget:" + owner + ":" + gid }

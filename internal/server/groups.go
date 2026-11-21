@@ -112,8 +112,10 @@ func (s *Server) groupJSON(q querier, a *actor, gid string) (obj, error) {
 			name = m.DisplayName
 		}
 	}
+	hop, wakes := s.groupLimits(q, gid)
 	return obj{"id": g.ID, "kind": g.Kind, "name": name, "topic": g.Topic, "ownerId": g.OwnerID, "lastSeq": g.LastSeq,
-		"myRole": myRole, "members": ms, "working": s.work.list(gid), "createdAt": g.CreatedAt}, nil
+		"myRole": myRole, "members": ms, "working": s.work.list(gid), "createdAt": g.CreatedAt,
+		"limits": obj{"hopLimit": hop, "agentWakesPerHour": wakes, "default": hop == hopLimit && wakes == agentWakesPerHour}}, nil
 }
 
 // addMember inserts pid into gid with a unique nick; existing members are returned unchanged.
@@ -414,7 +416,10 @@ func (s *Server) getGroup(c *ctx) (any, error) {
 
 func (s *Server) patchGroup(c *ctx) (any, error) {
 	gid := c.r.PathValue("id")
-	var req struct{ Name, Topic *string }
+	var req struct {
+		Name, Topic                 *string
+		HopLimit, AgentWakesPerHour *int
+	}
 	if err := c.decode(&req); err != nil {
 		return nil, err
 	}
@@ -444,6 +449,25 @@ func (s *Server) patchGroup(c *ctx) (any, error) {
 				return badRequest("群简介最多 500 字")
 			}
 			if _, err := tx.Exec(`UPDATE groups SET topic=? WHERE id=?`, *req.Topic, gid); err != nil {
+				return err
+			}
+		}
+		// 0 resets to the server default.
+		if req.HopLimit != nil {
+			v := *req.HopLimit
+			if v < 0 || v > maxHopLimit {
+				return badRequest("接力上限是 1 到 %d 跳（0 恢复默认 %d）", maxHopLimit, hopLimit)
+			}
+			if _, err := tx.Exec(`UPDATE groups SET hop_limit=? WHERE id=?`, nullPositive(v), gid); err != nil {
+				return err
+			}
+		}
+		if req.AgentWakesPerHour != nil {
+			v := *req.AgentWakesPerHour
+			if v < 0 || v > maxAgentWakesHour {
+				return badRequest("每小时唤醒次数是 1 到 %d（0 恢复默认 %d）", maxAgentWakesHour, agentWakesPerHour)
+			}
+			if _, err := tx.Exec(`UPDATE groups SET agent_wakes_per_hour=? WHERE id=?`, nullPositive(v), gid); err != nil {
 				return err
 			}
 		}
@@ -761,4 +785,11 @@ func (s *Server) openChat(c *ctx) (any, error) {
 	}
 	g, err := s.groupJSON(s.db.R, c.a, gid)
 	return obj{"group": g}, err
+}
+
+func nullPositive(v int) any {
+	if v <= 0 {
+		return nil
+	}
+	return v
 }

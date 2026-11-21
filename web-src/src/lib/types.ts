@@ -46,6 +46,8 @@ export interface Group {
   members: Member[]
   working?: Working[]
   createdAt?: number
+  /** Agent relay limits for this group (server default unless the owner/admins changed them). */
+  limits?: { hopLimit: number; agentWakesPerHour: number; default: boolean }
 }
 
 export interface GroupSummary {

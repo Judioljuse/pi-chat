@@ -33,6 +33,8 @@ const (
 	runTTL     = 60 * time.Minute
 	maxMembers = 100
 	hopLimit   = 6
+	// agentWakesPerHour is the default per-owner, per-group budget for wakes triggered by agents.
+	agentWakesPerHour = 30
 )
 
 // Config holds runtime settings.

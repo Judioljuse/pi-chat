@@ -719,7 +719,7 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 		return obj{"message": msg, "duplicate": true, "mentioned": []obj{}, "woken": []string{}, "notWoken": []obj{}}, nil
 	}
 	if a.isHuman() {
-		s.rl.reset("budget:" + a.ID)
+		s.rl.reset(budgetKey(a.ID, gid))
 	}
 	woken, notWoken := s.wk.dispatch(a, gid, seq, hop, targets, ms)
 	res := obj{"message": msg, "mentioned": mentioned, "woken": woken, "notWoken": notWoken}
