@@ -2,8 +2,16 @@ import { getState, setState, type Route } from './store'
 
 export const PUBLIC_ROUTES = new Set<Route['name']>(['login', 'redeem'])
 
+/** "#/g/<id>?seq=12": the message to scroll to once the chat is open (deep link from a 「群名」#12 reference). */
+export function routeSeq(hash = location.hash): number | null {
+  const q = hash.indexOf('?')
+  if (q < 0) return null
+  const v = new URLSearchParams(hash.slice(q + 1)).get('seq')
+  return v && /^[1-9]\d{0,8}$/.test(v) ? Number(v) : null
+}
+
 export function parseRoute(hash = location.hash): Route {
-  const p = hash.replace(/^#\/?/, '').split('/').map((x) => {
+  const p = hash.replace(/^#\/?/, '').replace(/\?.*$/, '').split('/').map((x) => {
     try {
       return decodeURIComponent(x)
     } catch {
@@ -55,6 +63,14 @@ export function syncRoute() {
   }
   if (me && r.name === 'login') {
     location.hash = '#/'
+    return
+  }
+  const seq = r.name === 'chat' ? routeSeq() : null
+  if (r.name === 'chat' && seq) {
+    // Hand the seq to MessageList (same path as a notification click) and drop it from the URL,
+    // so a reload or a later visit doesn't jump again.
+    history.replaceState(history.state, '', `#/g/${encodeURIComponent(r.gid)}`)
+    setState({ route: r, focus: { gid: r.gid, seq } })
     return
   }
   setState({ route: r })

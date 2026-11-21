@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { Copy, Ellipsis, KeyRound, Pencil, Plus, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { Check, Copy, Ellipsis, FolderGit2, KeyRound, Monitor, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import TaskRows, { type TaskRow } from '@/components/beautiful/task-rows'
 import CodeBlock from '@/components/beautiful/code-block'
 import {
@@ -25,7 +25,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { api } from '@/lib/api'
+import { groupAgents, type MachineGroup, type ProjectGroup } from '@/lib/agent-groups'
+import { api, ApiError } from '@/lib/api'
 import { copy, fmtTime, PLATFORM } from '@/lib/format'
 import { agentStateOf, terminalModeOf, fail, getState, loadAgents, loadGroups, loadInfo, notify, setState, useStore, workingAgentIds } from '@/lib/store'
 import type { Agent, Grant, Member } from '@/lib/types'
@@ -72,9 +73,241 @@ export function Agents() {
       ) : agents.length === 0 ? (
         <Empty className="py-10">还没有 agent。生成配对码，让你的 Claude Code 或 pi 接进来。</Empty>
       ) : (
-        agents.map((a) => <AgentCard key={a.id} a={a} />)
+        <AgentGroups agents={agents} />
       )}
     </Page>
+  )
+}
+
+// ---- grouping by machine and project (v0.2.7) ----
+
+/** Custom group names from GET /agent-groups; an older server without the endpoint leaves them empty. */
+function useGroupNames() {
+  const [names, setNames] = useState<Record<string, string>>({})
+  const [supported, setSupported] = useState(true)
+  useEffect(() => {
+    api<{ names?: Record<string, string> }>('GET', '/agent-groups')
+      .then((r) => setNames(r.names ?? {}))
+      .catch((e) => {
+        if (e instanceof ApiError && (e.status === 404 || e.status === 405)) setSupported(false)
+      })
+  }, [])
+  const rename = async (key: string, name: string) => {
+    try {
+      const r = await api<{ names?: Record<string, string> }>('PUT', '/agent-groups', { key, name })
+      setNames(r.names ?? {})
+      notify(name ? '已改名' : '已恢复默认名称')
+      return true
+    } catch (e) {
+      fail(e)
+      return false
+    }
+  }
+  return { names, rename: supported ? rename : undefined }
+}
+
+function AgentGroups({ agents }: { agents: Agent[] }) {
+  const { names, rename } = useGroupNames()
+  const [q, setQ] = useState('')
+  const focus = useStore((s) => (s.route.name === 'agents' ? s.route.focus : undefined))
+  const needle = q.trim().toLowerCase()
+  const shown = useMemo(
+    () => (needle ? agents.filter((a) => a.displayName.toLowerCase().includes(needle)) : agents),
+    [agents, needle],
+  )
+  const machines = useMemo(() => groupAgents(shown, names), [shown, names])
+  return (
+    <div className="flex flex-col gap-3">
+      {agents.length > 3 && (
+        <label className="flex h-8 items-center gap-2 rounded-control border border-border bg-card px-2 text-muted-foreground transition-colors focus-within:border-input">
+          <Search className="size-4 shrink-0" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && setQ('')}
+            placeholder="按名字搜索 agent"
+            aria-label="按名字搜索 agent"
+            className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+          />
+          {q && (
+            <button type="button" aria-label="清除搜索" onClick={() => setQ('')} className="grid size-5 place-items-center rounded-chip hover:bg-accent hover:text-foreground">
+              <X className="size-3.5" />
+            </button>
+          )}
+        </label>
+      )}
+      {machines.length === 0 ? (
+        <Empty className="py-6">没有名字包含「{q.trim()}」的 agent</Empty>
+      ) : (
+        machines.map((m) => (
+          <MachineSection
+            key={m.key}
+            m={m}
+            forceOpen={!!needle || (!!focus && m.agents.some((a) => a.id === focus))}
+            rename={rename}
+          />
+        ))
+      )}
+    </div>
+  )
+}
+
+const COLLAPSED_KEY = 'pichat.agentGroups.collapsed'
+const readCollapsed = (): string[] => {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function MachineSection({
+  m,
+  forceOpen,
+  rename,
+}: {
+  m: MachineGroup<Agent>
+  forceOpen: boolean
+  rename?: (key: string, name: string) => Promise<boolean>
+}) {
+  const [open, setOpenState] = useState(() => !readCollapsed().includes(m.key))
+  const setOpen = (o: boolean) => {
+    setOpenState(o)
+    const rest = readCollapsed().filter((k) => k !== m.key)
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(o ? rest : [...rest, m.key].slice(-100)))
+  }
+  const [editing, setEditing] = useState(false)
+  const flat = m.projects.length === 1 && !m.projects[0].key
+  return (
+    <Collapsible open={open || forceOpen} onOpenChange={setOpen} className="flex flex-col" data-machine={m.key}>
+      <div className="group/head flex min-h-9 items-center gap-1.5">
+        {editing && rename ? (
+          <InlineRename
+            value={m.label}
+            placeholder={m.defaultLabel}
+            onCancel={() => setEditing(false)}
+            onSave={async (name) => (await rename(m.key, name === m.defaultLabel ? '' : name)) && setEditing(false)}
+          />
+        ) : (
+          <CollapsibleTrigger className="-ml-2 min-h-8 w-auto min-w-0 flex-initial gap-2 rounded-control px-2 py-1 font-normal hover:bg-accent/60">
+            <Monitor className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate text-[14px] font-medium text-foreground" title={m.label !== m.defaultLabel ? m.defaultLabel : undefined}>
+              {m.label}
+            </span>
+            <span className="shrink-0 text-[12.5px] text-muted-foreground tabular-nums">
+              {m.agents.length} 个 · {m.online} 个在线
+            </span>
+            <CollapsibleIndicator className="ml-0" />
+          </CollapsibleTrigger>
+        )}
+        {!editing && rename && !m.unknown && (
+          <RenameButton label={`重命名电脑「${m.label}」`} onClick={() => setEditing(true)} />
+        )}
+      </div>
+      <CollapsibleContent>
+        <div className="flex flex-col gap-4 pt-1 pb-2">
+          {flat
+            ? m.projects[0].agents.map((a) => <AgentCard key={a.id} a={a} />)
+            : m.projects.map((p) => <ProjectBlock key={p.key ?? 'other'} p={p} rename={rename} />)}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function ProjectBlock({ p, rename }: { p: ProjectGroup<Agent>; rename?: (key: string, name: string) => Promise<boolean> }) {
+  const [editing, setEditing] = useState(false)
+  return (
+    <div className="flex flex-col gap-2 border-l border-border pl-3" data-project={p.key ?? ''}>
+      <div className="group/head flex min-h-7 items-center gap-1.5">
+        {editing && rename && p.key ? (
+          <InlineRename
+            value={p.label}
+            placeholder={p.defaultLabel}
+            onCancel={() => setEditing(false)}
+            onSave={async (name) => (await rename(p.key!, name === p.defaultLabel ? '' : name)) && setEditing(false)}
+          />
+        ) : (
+          <>
+            <FolderGit2 className={cn('size-3.5 shrink-0 text-muted-foreground', !p.key && 'opacity-60')} />
+            <span className="truncate text-[13px] font-medium text-body" title={p.title || undefined}>
+              {p.label}
+            </span>
+            <span className="shrink-0 text-[12px] text-muted-foreground tabular-nums">{p.agents.length}</span>
+            {rename && p.key && <RenameButton label={`重命名项目分组「${p.label}」`} onClick={() => setEditing(true)} />}
+          </>
+        )}
+      </div>
+      {p.agents.map((a) => (
+        <AgentCard key={a.id} a={a} />
+      ))}
+    </div>
+  )
+}
+
+function RenameButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title="重命名"
+      onClick={onClick}
+      className="grid size-6 shrink-0 place-items-center rounded-chip text-muted-foreground opacity-0 transition-opacity group-hover/head:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 [@media(hover:none)]:opacity-100 [&_svg]:size-3.5"
+    >
+      <Pencil />
+    </button>
+  )
+}
+
+/** Pencil -> inline input. Enter saves, Esc cancels; an empty name resets to the default label. */
+function InlineRename({
+  value,
+  placeholder,
+  onSave,
+  onCancel,
+}: {
+  value: string
+  placeholder: string
+  onSave: (name: string) => Promise<unknown>
+  onCancel: () => void
+}) {
+  const [name, setName] = useState(value)
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    if (busy) return
+    const v = name.trim()
+    if (v === value) return onCancel()
+    setBusy(true)
+    await onSave(v)
+    setBusy(false)
+  }
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      save()
+    } else if (e.key === 'Escape') onCancel()
+  }
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-1">
+      <Input
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={onKey}
+        maxLength={40}
+        placeholder={`${placeholder}（留空恢复默认）`}
+        aria-label="分组名称"
+        className="h-7 max-w-72 bg-card text-[13px]"
+        disabled={busy}
+      />
+      <Button variant="ghost" size="icon-sm" aria-label="保存" onClick={save} disabled={busy}>
+        <Check />
+      </Button>
+      <Button variant="ghost" size="icon-sm" aria-label="取消" onClick={onCancel} disabled={busy}>
+        <X />
+      </Button>
+    </div>
   )
 }
 

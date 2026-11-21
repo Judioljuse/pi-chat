@@ -271,3 +271,10 @@
 .md img { max-width: min(100%, 360px); max-height: 320px; border-radius: var(--radius-card); }
 .md-on-dark code, .md-on-dark pre { background: color-mix(in srgb, var(--bubble-me-foreground) 12%, transparent); border-color: transparent; }
 .md-on-dark a { color: inherit; }
+
+/* Message text: native selection on desktop and touch (long press selects words, the callout offers copy). */
+.msg-text { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+/* "#12" message references (components/chat/seq-ref.tsx). */
+.md a.seq-ref { color: var(--brand); text-decoration: none; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.md a.seq-ref:hover { text-decoration: underline; }
+.md-on-dark a.seq-ref { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }

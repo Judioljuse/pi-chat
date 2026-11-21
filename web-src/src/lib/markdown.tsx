@@ -1,7 +1,8 @@
-import { memo, type ComponentProps, type ReactNode } from 'react'
+import { memo, type ComponentProps, type ComponentType, type ReactNode } from 'react'
 import Markdown, { type Components, defaultUrlTransform } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
+import type { SeqPart } from './seq-refs'
 import { cn } from './utils'
 
 export type MentionKind = 'human' | 'agent' | 'me' | 'all'
@@ -23,7 +24,7 @@ interface MdNode {
   data?: { hName?: string; hProperties?: Record<string, string> }
 }
 
-const SKIP = new Set(['code', 'inlineCode', 'link', 'linkReference', 'html'])
+const SKIP = new Set(['code', 'inlineCode', 'link', 'linkReference', 'html', 'mention', 'seqref'])
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 function mentionPlugin(targets: MentionTarget[]) {
@@ -77,6 +78,45 @@ function mentionPlugin(targets: MentionTarget[]) {
   return () => (tree: MdNode) => walk(tree)
 }
 
+// ---- #seq reference remark plugin ----
+
+/** Turns "#12" / "「群名」#12" in text nodes into seqref nodes; code, links and mentions are left alone. */
+function seqRefPlugin(split: (text: string) => SeqPart[] | null) {
+  const walk = (node: MdNode) => {
+    if (!node.children || SKIP.has(node.type)) return
+    const next: MdNode[] = []
+    for (const child of node.children) {
+      if (child.type === 'text' && child.value) {
+        const parts = split(child.value)
+        if (parts) {
+          for (const p of parts)
+            next.push(
+              typeof p === 'string'
+                ? { type: 'text', value: p }
+                : {
+                    type: 'seqref',
+                    data: { hName: 'seqref', hProperties: { gid: p.gid, seq: String(p.seq) } },
+                    children: [{ type: 'text', value: p.text }],
+                  },
+            )
+          continue
+        }
+      }
+      walk(child)
+      next.push(child)
+    }
+    node.children = next
+  }
+  return () => (tree: MdNode) => walk(tree)
+}
+
+/** What MarkdownText needs to render message references; build it once per chat (useMemo). */
+export interface SeqRefOptions {
+  split: (text: string) => SeqPart[] | null
+  /** Renders one reference; gets the target group, seq and the matched text as children. */
+  Link: ComponentType<{ gid: string; seq: number; children: ReactNode }>
+}
+
 // ---- components ----
 
 const PILL: Record<MentionKind, string> = {
@@ -110,19 +150,40 @@ const components = {
   mention: ({ kind, children }: { kind: MentionKind; children: ReactNode }) => <MentionPill kind={kind}>{children}</MentionPill>,
 } as Components
 
+const seqRefComponents = new WeakMap<object, Components>()
+function withSeqRefs(Link: SeqRefOptions['Link']): Components {
+  let c = seqRefComponents.get(Link)
+  if (!c) {
+    c = {
+      ...components,
+      seqref: ({ gid, seq, children }: { gid: string; seq: string; children: ReactNode }) => (
+        <Link gid={gid} seq={Number(seq)}>
+          {children}
+        </Link>
+      ),
+    } as Components
+    seqRefComponents.set(Link, c)
+  }
+  return c
+}
+
 export interface MarkdownTextProps {
   text: string
   mentions?: MentionTarget[]
+  /** Clickable "#12" message references (chat messages only). */
+  seqRefs?: SeqRefOptions
   className?: string
 }
 
 /** Safe markdown: no rehype-raw, so raw HTML is escaped; external images become links. */
-export const MarkdownText = memo(function MarkdownText({ text, mentions = [], className }: MarkdownTextProps) {
+export const MarkdownText = memo(function MarkdownText({ text, mentions = [], seqRefs, className }: MarkdownTextProps) {
+  const plugins = [remarkGfm, remarkBreaks, mentionPlugin(mentions)]
+  if (seqRefs) plugins.push(seqRefPlugin(seqRefs.split))
   return (
     <div className={cn('md', className)}>
       <Markdown
-        remarkPlugins={[remarkGfm, remarkBreaks, mentionPlugin(mentions)]}
-        components={components}
+        remarkPlugins={plugins}
+        components={seqRefs ? withSeqRefs(seqRefs.Link) : components}
         urlTransform={defaultUrlTransform}
       >
         {text}

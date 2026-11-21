@@ -12,6 +12,7 @@ import { fail, loadOlder, loadQuote, notify, setState, useStore, type ChatState 
 import type { Group, Message } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { MessageItem } from './message-item'
+import { SeqRefContext, useSeqRefs } from './seq-ref'
 import { buildRows, GROUP_GAP_MS, snippet, type Pending } from './util'
 
 export interface MessageListProps {
@@ -98,7 +99,8 @@ function Rows({
   const rows = useMemo(() => buildRows(msgs, chat.firstUnread, keyOf), [msgs, chat.firstUnread, keyOf])
   const bySeq = useMemo(() => new Map(msgs.map((m) => [m.seq, m])), [msgs])
   const [sheet, setSheet] = useState<{ m: Message; canRecall: boolean } | null>(null)
-  const onLongPress = useCallback((m: Message, canRecall: boolean) => setSheet({ m, canRecall }), [])
+  const onActions = useCallback((m: Message, canRecall: boolean) => setSheet({ m, canRecall }), [])
+  const seqRefs = useSeqRefs(gid)
   const me = useMemo(() => ({ id: meId, name: info.members.find((x) => x.id === meId)?.nick || '我' }), [meId, info.members])
 
   // Fetch reply targets that fall outside the loaded window.
@@ -170,7 +172,9 @@ function Rows({
     [gid, scrollRef, ctx, reduce],
   )
 
-  // Desktop notification click: scroll to that message once this chat is on screen.
+  const refCtx = useMemo(() => ({ gid, jump }), [gid, jump])
+
+  // Desktop notification click or a "#/g/<id>?seq=" link: scroll to that message once this chat is on screen.
   const focus = useStore((s) => s.focus)
   useEffect(() => {
     if (!focus || focus.gid !== gid) return
@@ -179,7 +183,7 @@ function Rows({
   }, [focus, gid, jump])
 
   return (
-    <>
+    <SeqRefContext.Provider value={refCtx}>
       <div className="flex h-8 items-center justify-center text-[12px] text-muted-foreground">
         {chat.hasMore ? (
           chat.loading ? (
@@ -226,7 +230,8 @@ function Rows({
             quoted={m.replyTo ? (bySeq.get(m.replyTo) ?? chat.quotes[m.replyTo]) : undefined}
             animate={m.seq > (baseline.current ?? 0) && !keys.has(m.seq)}
             lastInRun={!(rows[i + 1]?.type === 'msg' && (rows[i + 1] as { grouped: boolean }).grouped)}
-            onLongPress={onLongPress}
+            seqRefs={seqRefs}
+            onActions={onActions}
             onReply={onReply}
             onJump={jump}
             onRecall={onRecall}
@@ -253,6 +258,7 @@ function Rows({
             quoted={p.replyTo ? (bySeq.get(p.replyTo) ?? chat.quotes[p.replyTo]) : undefined}
             animate
             pending={p}
+            seqRefs={seqRefs}
             onReply={onReply}
             onJump={jump}
             onRecall={onRecall}
@@ -292,7 +298,7 @@ function Rows({
           )}
         </SheetContent>
       </Sheet>
-    </>
+    </SeqRefContext.Provider>
   )
 }
 

@@ -186,4 +186,14 @@ ALTER TABLE principals ADD COLUMN runtime_listener TEXT;
 	// 5: listener work dirs (JSON {main,default,binds:{groupId:dir}}), shown only to the agent's owner.
 	`
 ALTER TABLE principals ADD COLUMN runtime_dirs TEXT;
+`,
+	// 6: owner's custom names for the agent groups on the agents page (machine 'host:<host>', project 'proj:<host>|<root>|<branch or worktree path>').
+	`
+CREATE TABLE agent_group_names (
+  owner_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (owner_id, key)
+) STRICT;
 `}

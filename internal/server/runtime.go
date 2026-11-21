@@ -98,6 +98,61 @@ type runtimeDirs struct {
 	Main    string            `json:"main,omitempty"`
 	Default string            `json:"default,omitempty"`
 	Binds   map[string]string `json:"binds,omitempty"`
+	// Repo is the git checkout of main (or default when main has none), v0.2.7; nil when unknown.
+	Repo *repoInfo `json:"repo,omitempty"`
+	// Repos is the git checkout of each reported dir (main, default, binds), keyed by that dir.
+	Repos map[string]repoInfo `json:"repos,omitempty"`
+}
+
+// repoInfo is the git checkout a dir is in, as the listener sees it. Root is the main repository's
+// root (for a worktree: the checkout the worktree belongs to), Path the worktree's own top level.
+type repoInfo struct {
+	Root     string `json:"root"`
+	Branch   string `json:"branch,omitempty"`
+	Worktree bool   `json:"worktree"`
+	Path     string `json:"path,omitempty"`
+}
+
+const maxBranchLen = 100
+
+// cleanBranch accepts a branch name (or "HEAD" when detached) of at most maxBranchLen runes without
+// control/format characters or whitespace; else "".
+func cleanBranch(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	if s == "" || !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxBranchLen {
+		return ""
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.IsSpace(r) {
+			return ""
+		}
+	}
+	return s
+}
+
+// parseRepo sanitizes one reported repo object; nil when it has no valid root or a non-bool worktree.
+func parseRepo(v any) *repoInfo {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	root := cleanDir(m["root"])
+	if root == "" {
+		return nil
+	}
+	wt, ok := m["worktree"].(bool)
+	if !ok && m["worktree"] != nil {
+		return nil
+	}
+	r := &repoInfo{Root: root, Branch: cleanBranch(m["branch"]), Worktree: wt}
+	if wt {
+		r.Path = cleanDir(m["path"])
+	}
+	return r
 }
 
 var bindKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -133,8 +188,8 @@ func parseDirs(raw json.RawMessage) (d *runtimeDirs, ok bool) {
 		return nil, false
 	}
 	var in struct {
-		Main, Default any
-		Binds         map[string]any
+		Main, Default, Repo any
+		Binds, Repos        map[string]any
 	}
 	if json.Unmarshal(raw, &in) != nil {
 		return nil, false
@@ -158,7 +213,42 @@ func parseDirs(raw json.RawMessage) (d *runtimeDirs, ok bool) {
 			d.Binds[k] = dir
 		}
 	}
+	d.Repo = parseRepo(in.Repo)
+	// Repos only for dirs kept above.
+	for _, dir := range d.reported() {
+		if r := parseRepo(in.Repos[dir]); r != nil {
+			if d.Repos == nil {
+				d.Repos = map[string]repoInfo{}
+			}
+			d.Repos[dir] = *r
+		}
+	}
 	return d, true
+}
+
+// reported lists the distinct dirs in d (main, default, binds).
+func (d *runtimeDirs) reported() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(s string) {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	add(d.Main)
+	add(d.Default)
+	for _, v := range d.Binds {
+		add(v)
+	}
+	return out
+}
+
+func repoJSON(r *repoInfo) any {
+	if r == nil {
+		return nil
+	}
+	return obj{"root": r.Root, "branch": nullable(r.Branch), "worktree": r.Worktree, "path": nullable(r.Path)}
 }
 
 // dirsJSON is the owner-only view of the dirs (nil when never reported).
@@ -170,7 +260,11 @@ func (s *Server) dirsJSON(d *runtimeDirs) any {
 	if binds == nil {
 		binds = map[string]string{}
 	}
-	return obj{"main": nullable(d.Main), "default": nullable(d.Default), "binds": binds}
+	repos := obj{}
+	for k, r := range d.Repos {
+		repos[k] = repoJSON(&r)
+	}
+	return obj{"main": nullable(d.Main), "default": nullable(d.Default), "binds": binds, "repo": repoJSON(d.Repo), "repos": repos}
 }
 
 // listenerReport is the listener script version a listener reports (sha256 prefix, server version it came from).

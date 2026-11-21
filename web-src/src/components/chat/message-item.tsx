@@ -1,6 +1,6 @@
-import { memo, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
+import { memo, useEffect, useState, type ReactNode } from 'react'
 import { useReducedMotion } from 'motion/react'
-import { AlertCircle, Copy, CornerUpLeft, CheckCheck, FileText, MessageSquareX, RotateCcw, Trash2 } from 'lucide-react'
+import { AlertCircle, Copy, CornerUpLeft, CheckCheck, Ellipsis, FileText, MessageSquareX, RotateCcw, Trash2 } from 'lucide-react'
 import {
   Message,
   MessageAvatar,
@@ -17,12 +17,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { fileUrl } from '@/lib/api'
 import { EASE_OUT } from '@/lib/ease'
 import { copy, fmtSize, fmtTime } from '@/lib/format'
-import { MarkdownText, type MentionTarget } from '@/lib/markdown'
+import { MarkdownText, type MentionTarget, type SeqRefOptions } from '@/lib/markdown'
 import type { FileRef, Member, Message as Msg, Via } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { INLINE_IMG, isCoarse, RECALL_MS, snippet, type Pending } from './util'
-
-const LONG_PRESS_MS = 450
+import { INLINE_IMG, RECALL_MS, snippet, type Pending } from './util'
 
 export interface MessageItemProps {
   m: Msg
@@ -35,8 +33,10 @@ export interface MessageItemProps {
   pending?: Pending
   /** Last message of a run from one author: carries the read receipt. */
   lastInRun?: boolean
-  /** Touch devices: a long press opens the action sheet. */
-  onLongPress?: (m: Msg, canRecall: boolean) => void
+  /** Clickable "#12" references in the text. */
+  seqRefs?: SeqRefOptions
+  /** Touch devices: the "⋯" button opens the action sheet (a long press stays native text selection). */
+  onActions?: (m: Msg, canRecall: boolean) => void
   onReply: (m: Msg) => void
   onJump: (seq: number) => void
   onRecall: (m: Msg) => void
@@ -201,7 +201,8 @@ export const MessageItem = memo(function MessageItem({
   animate,
   pending,
   lastInRun,
-  onLongPress,
+  seqRefs,
+  onActions,
   onReply,
   onJump,
   onRecall,
@@ -216,7 +217,6 @@ export const MessageItem = memo(function MessageItem({
   // Decided once: a confirmed optimistic row keeps its key, and dropping the props mid-animation freezes it.
   const [entering] = useState(animate)
   const motionProps = entering && !reduce ? ENTER : {}
-  const press = useLongPress(() => onLongPress?.(m, canRecall))
 
   if (m.recalled) {
     return (
@@ -246,7 +246,7 @@ export const MessageItem = memo(function MessageItem({
       <span className="text-[13px] font-medium text-foreground">{fallback}</span>
     )
 
-  // Desktop hover row. Touch devices use the long-press sheet instead and never show it.
+  // Desktop hover row. Touch devices use the "⋯" button and the bottom sheet instead and never show it.
   const actions = !pending && (
     <span
       className={cn(
@@ -272,8 +272,30 @@ export const MessageItem = memo(function MessageItem({
     </span>
   )
 
+  // Touch only: opens the action sheet. A long press on the text is left to native selection.
+  const more =
+    !pending && onActions ? (
+      <button
+        type="button"
+        aria-label="消息操作"
+        onClick={() => onActions(m, canRecall)}
+        className={cn(
+          'hidden size-7 shrink-0 place-items-center rounded-full text-muted-foreground/70 active:bg-accent active:text-foreground pointer-coarse:grid [&_svg]:size-4',
+          !isAgent && 'absolute bottom-0',
+          !isAgent && (mine ? 'right-full mr-0.5' : 'left-full ml-0.5'),
+        )}
+      >
+        <Ellipsis />
+      </button>
+    ) : null
+
   const text = m.text ? (
-    <MarkdownText text={m.text} mentions={mentions} className={cn('text-[14px]', mine && 'md-on-dark')} />
+    <MarkdownText
+      text={m.text}
+      mentions={mentions}
+      seqRefs={seqRefs}
+      className={cn('msg-text text-[14px]', mine && 'md-on-dark')}
+    />
   ) : null
   const quote = m.replyTo ? <Quote seq={m.replyTo} quoted={quoted} onJump={onJump} fill={!isAgent} /> : null
   const files = m.files?.length ? <Files files={m.files} align={mine ? 'end' : 'start'} /> : null
@@ -284,9 +306,8 @@ export const MessageItem = memo(function MessageItem({
       data-seq={m.seq > 0 ? m.seq : undefined}
       aria-label={`${a?.name ?? ''} ${fmtTime(m.createdAt)}`}
       {...motionProps}
-      {...press}
       className={cn(
-        'relative pointer-coarse:[-webkit-touch-callout:none]',
+        'relative',
         grouped ? 'mt-1' : 'mt-4',
         pending?.status === 'sending' && 'opacity-60',
       )}
@@ -331,10 +352,11 @@ export const MessageItem = memo(function MessageItem({
               </MessageBubble>
             )}
             {files}
-            {(actions || readers.length > 0) && (
-              <div className="-mt-0.5 -mb-3 -ml-1.5 flex h-7 items-center gap-2 pointer-coarse:my-0 pointer-coarse:h-auto">
+            {(actions || more || readers.length > 0) && (
+              <div className="-mt-0.5 -mb-3 -ml-1.5 flex h-7 items-center gap-2 pointer-coarse:my-0">
                 {readers.length > 0 && <Readers readers={readers} className="pl-1.5" />}
                 {actions}
+                {more}
               </div>
             )}
           </div>
@@ -348,6 +370,7 @@ export const MessageItem = memo(function MessageItem({
             )}
             {files}
             {actions}
+            {more}
           </div>
         )}
         {!isAgent && <Footer pending={pending} readers={readers} onRetry={onRetry} onDiscard={onDiscard} />}
@@ -356,33 +379,6 @@ export const MessageItem = memo(function MessageItem({
     </Message>
   )
 })
-
-/** Touch long press: fires after LONG_PRESS_MS unless the finger moves or lifts. */
-function useLongPress(fire: () => void) {
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const origin = useRef({ x: 0, y: 0 })
-  const cancel = () => clearTimeout(timer.current)
-  useEffect(() => cancel, [])
-  return {
-    onPointerDown: (e: PointerEvent<HTMLElement>) => {
-      if (e.pointerType !== 'touch' || (e.target as HTMLElement).closest('a,button,input,textarea')) return
-      origin.current = { x: e.clientX, y: e.clientY }
-      cancel()
-      timer.current = setTimeout(() => {
-        navigator.vibrate?.(10)
-        fire()
-      }, LONG_PRESS_MS)
-    },
-    onPointerMove: (e: PointerEvent<HTMLElement>) => {
-      if (Math.hypot(e.clientX - origin.current.x, e.clientY - origin.current.y) > 8) cancel()
-    },
-    onPointerUp: cancel,
-    onPointerCancel: cancel,
-    onContextMenu: (e: MouseEvent<HTMLElement>) => {
-      if (isCoarse()) e.preventDefault()
-    },
-  }
-}
 
 function Footer({
   pending,

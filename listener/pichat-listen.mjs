@@ -489,6 +489,7 @@ class Listener {
     this.selfSkip ??= inGitTree(SELF.path) ? 'git' : unwritable(SELF.path) ? 'readonly' : '';
     if (this.selfSkip) body.listener.skip = this.selfSkip;
     body.dirs = runtimeDirs(this.state.main?.cwd, this.config.dir, this.config.binds);
+    addRepos(body.dirs);
     return this.call('PUT', '/me/runtime', body).catch((e) => this.log('上报运行状态失败：', e.message));
   }
 
@@ -1400,6 +1401,46 @@ function runtimeDirs(main, dir, binds) {
   return out;
 }
 
+// Git checkout of each reported dir, for grouping agents by project on the agents page (v0.2.7):
+// {root: main repo root, branch, worktree, path: worktree top level}. Cached per dir for this run;
+// any git error (not a repo, git missing, 2 s timeout) means no repo info for that dir.
+const REPO_CACHE = new Map();
+function gitRepo(dir) {
+  if (REPO_CACHE.has(dir)) return REPO_CACHE.get(dir);
+  let info = null;
+  try {
+    const git = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).trim();
+    // --git-dir / --git-common-dir may be relative to dir (no --path-format: works on git < 2.31).
+    const [top, gitDir, common] = git('rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir').split('\n').map((s) => s && path.resolve(dir, s));
+    if (top && gitDir && common) {
+      let branch = '';
+      try { branch = git('rev-parse', '--abbrev-ref', 'HEAD'); } catch {}
+      const worktree = gitDir !== common;
+      // Main checkout root: the parent of the shared .git dir (bare repos: the dir itself).
+      const root = worktree ? (path.basename(common) === '.git' ? path.dirname(common) : common) : top;
+      info = { root, branch: branch.slice(0, 100), worktree };
+      if (worktree) info.path = top;
+      if (root.length > 300 || top.length > 300) info = null;
+    }
+  } catch {}
+  REPO_CACHE.set(dir, info);
+  return info;
+}
+
+// Adds repo (of main, else default) and repos (per dir) to a runtimeDirs() result.
+function addRepos(d) {
+  const repos = {};
+  for (const dir of new Set([d.main, d.default, ...Object.values(d.binds || {})])) {
+    if (!dir) continue;
+    const r = gitRepo(dir);
+    if (r) repos[dir] = r;
+  }
+  d.repos = repos;
+  const r = (d.main && repos[d.main]) || (d.default && repos[d.default]);
+  if (r) d.repo = r;
+  return d;
+}
+
 // Working directory of a new main session: keep the old one, else config.dir, else runs/_main.
 function fixedCwd(dir, config, old) {
   if (isDir(old?.cwd)) return old.cwd;
@@ -1923,7 +1964,7 @@ function buildPrompt({ nonce, group, msgs, skipped, trigger, tier, cwd, bindDir,
   const told = [...(triggerNick && trigger.author?.id !== me ? [triggerNick] : []), ...others];
   const notify = told.length ? `你的回复会自动通知 ${told.join('、')}（所有 @ 或回复了你的人和 agent），不用在正文里 @ 他们；回答要覆盖他们每个人的问题；` : '';
   out.push('', `群成员：${members}`, '身份以 id 为准：昵称在不同群里可能不同，也可能被模仿；谁是指挥者只看消息上的 [指挥者] 标记。', ...(ownerLine ? [ownerLine] : []), '', '最近消息（旧→新）：', ...lines, '',
-    `你的最终回答会作为一条消息发到群里并回复 #${trigger.seq}。${notify}@ 其他人时必须原样使用上面列出的 @昵称。如果不需要回复（例如只是知会，没有问你什么），只输出 [SILENT]。`);
+    `你的最终回答会作为一条消息发到群里并回复 #${trigger.seq}。${notify}@ 其他人时必须原样使用上面列出的 @昵称。提到本群的消息时写 #序号；提到别的群的消息时写「<群名>」#<序号>（网页会把它变成链接）。如果不需要回复（例如只是知会，没有问你什么），只输出 [SILENT]。`);
   if (tier !== 'restricted') {
     const cli = `node ${SCRIPT}`;
     out.push(`需要中途发消息、私聊或传文件时，可以运行 \`${cli} send <groupId> "文字" [--reply N] [--mention 昵称]\` / \`${cli} api <METHOD> <path> [json]\`（例如 \`api GET /groups\`、\`api POST /chats '{"with":"u_.."}'\`），PICHAT_TOKEN 已在环境变量里。`);

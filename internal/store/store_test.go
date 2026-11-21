@@ -61,11 +61,26 @@ func TestMigrateFromV1(t *testing.T) {
 	if _, err := db.W.Exec(`INSERT INTO agent_sessions(agent_id,session,host,started_at) VALUES('a_c','s1','h',2)`); err != nil {
 		t.Fatal(err)
 	}
+	// Migration 6: agent group names, keyed per owner.
+	if _, err := db.W.Exec(`INSERT INTO agent_group_names(owner_id,key,name,updated_at) VALUES('u_a','host:box','办公室',3)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.Exec(`INSERT INTO agent_group_names(owner_id,key,name,updated_at) VALUES('u_a','host:box','x',4)`); err == nil {
+		t.Fatal("duplicate (owner,key) accepted")
+	}
+	var dirs sql.NullString
+	if err := db.R.QueryRow(`SELECT runtime_dirs FROM principals WHERE id='a_c'`).Scan(&dirs); err != nil || dirs.Valid {
+		t.Fatalf("runtime_dirs: %v %v", dirs, err)
+	}
 	// Re-opening is a no-op.
 	db.Close()
 	db2, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var name string
+	if err := db2.R.QueryRow(`SELECT name FROM agent_group_names WHERE owner_id='u_a'`).Scan(&name); err != nil || name != "办公室" {
+		t.Fatalf("group name after reopen: %q %v", name, err)
 	}
 	db2.Close()
 }

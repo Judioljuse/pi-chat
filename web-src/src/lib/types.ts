@@ -157,6 +157,19 @@ export interface RuntimeDirs {
   main?: string | null
   default?: string | null
   binds?: Record<string, string> | null
+  /** v0.2.7: git checkout of main (else default); absent on older listeners and outside a repo. */
+  repo?: RepoInfo | null
+  /** v0.2.7: git checkout per reported dir, keyed by dir. */
+  repos?: Record<string, RepoInfo> | null
+}
+
+/** A git checkout as the listener sees it. root is the main repository's root, also for a worktree. */
+export interface RepoInfo {
+  root: string
+  branch?: string | null
+  worktree: boolean
+  /** Worktrees: the worktree's own top level. */
+  path?: string | null
 }
 
 /** Someone the caller can open a DM with (GET /contacts). */

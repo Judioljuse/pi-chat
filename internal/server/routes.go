@@ -45,6 +45,8 @@ func (s *Server) routes() {
 	h("PUT "+p+"/agents/{id}/wake", human, s.setWake)
 	h("POST "+p+"/agents/{id}/reset-session", human, s.resetSession)
 	h("POST "+p+"/agents/{id}/dismiss-notice", human, s.dismissNotice)
+	h("GET "+p+"/agent-groups", human, s.getAgentGroups)
+	h("PUT "+p+"/agent-groups", human, s.putAgentGroup)
 
 	h("POST "+p+"/pair", pub, s.pair)
 	h("POST "+p+"/run-tokens", agentTok, s.createRunToken)
@@ -143,7 +145,7 @@ func (s *Server) describe(c *ctx) (any, error) {
 			"POST /groups/{id}/read {seq}", "DELETE /groups/{id}/messages/{seq}",
 			"POST /chats {with}", "GET /contacts", "GET /principals/{id}", "POST /files (multipart file)", "GET /files/{id}",
 			"POST /mcp (MCP Streamable HTTP, Bearer agent/run token; tools: view_attachment, web_fetch, web_search)",
-			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?,listener?:{sha256,version,autoUpdate},dirs?:{main,default,binds:{groupId:dir}}}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
+			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?,listener?:{sha256,version,autoUpdate},dirs?:{main,default,binds:{groupId:dir},repo?:{root,branch,worktree,path},repos?:{dir:{root,branch,worktree,path}}}}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
 		},
 		"tools": s.toolsInfo(),
 		"limits": obj{"sendPerMinute": 30, "hopLimit": hopLimit, "agentWakesPerOwnerPerHour": 30, "humanWakesPerAgentPerHour": 10,
