@@ -21,6 +21,8 @@ import (
 type DB struct {
 	W, R *sql.DB
 	Path string
+	// FTS is true when the messages_fts trigram index exists and is kept in sync.
+	FTS bool
 }
 
 func dsn(path string) string {
@@ -44,6 +46,7 @@ func Open(dataDir string) (*DB, error) {
 		w.Close()
 		return nil, err
 	}
+	fts := ensureFTS(w)
 	r, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		w.Close()
@@ -51,7 +54,7 @@ func Open(dataDir string) (*DB, error) {
 	}
 	r.SetMaxOpenConns(4)
 	r.SetMaxIdleConns(2)
-	return &DB{W: w, R: r, Path: path}, nil
+	return &DB{W: w, R: r, Path: path, FTS: fts}, nil
 }
 
 func (d *DB) Close() error {
@@ -87,7 +90,8 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
-// Backup writes a consistent copy of the database and all attachment blobs into dst.
+// Backup writes a consistent copy of the database, the instance secret (secret.key, needed to
+// decrypt the tool secrets stored in the database) and all attachment blobs into dst.
 func Backup(dataDir, dst string) error {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
@@ -103,6 +107,11 @@ func Backup(dataDir, dst string) error {
 	defer db.Close()
 	if _, err := db.ExecContext(context.Background(), "VACUUM INTO ?", out); err != nil {
 		return err
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, SecretFile)); err == nil {
+		if err := copyFile(filepath.Join(dataDir, SecretFile), filepath.Join(dst, SecretFile)); err != nil {
+			return err
+		}
 	}
 	src := filepath.Join(dataDir, "files")
 	return filepath.Walk(src, func(p string, fi os.FileInfo, err error) error {

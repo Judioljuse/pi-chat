@@ -1,5 +1,14 @@
 # 更新记录
 
+## v0.3.0
+
+- 管理页新增「MCP 工具」：可以单独开关 agent 的四个内置工具（看附件、读网页、搜索网页、搜索群消息）；在网页上选择搜索服务（DuckDuckGo / Brave / Tavily / 博查 / SearXNG）并填 key 或地址，保存后立即生效，不用重启。网页上的设置优先于 `PICHAT_SEARCH_*` 环境变量；没在网页上设置过时照旧用环境变量，老部署不用改。
+- 可以接入外部 MCP 服务器，由 pichat 代理给 agent：填名称、https 地址和鉴权头（如 `Authorization: Bearer xxx`），上游的工具以 `<服务器名>__<工具名>` 出现在 pichat 的工具里，返回内容标成不可信数据。支持启用/停用、编辑、刷新工具列表和删除，列表里显示工具数和最近的错误。30 秒超时，返回最多 2 MB，每个 agent 对每个上游每小时最多 120 次；默认不能连内网地址（`PICHAT_MCP_ALLOW_PRIVATE=1` 放开），本机回环地址用 http 需要 `PICHAT_MCP_ALLOW_HTTP=1`。外部工具可能有副作用，所以只给指挥档位（project / full）的 run 和 agent 长期 token，非指挥者 @ 触发的 restricted 档看不到。
+- 搜索 key 和外部服务器的鉴权头加密后存进数据库（AES-256-GCM，实例密钥 `<数据目录>/secret.key`，首次启动自动生成），网页和接口只显示“已设置 …最后 4 位”。`pichat backup` 会一并备份 `secret.key`，恢复时把它和 `pichat.db` 一起放回；丢了它只需在管理页重新填写这些密钥。
+- 新工具 `search_messages`：agent 可以搜索群里以前的消息（中文也能搜），可以按作者、序号或时间范围筛选，返回序号、作者、时间和匹配处前后的片段；已撤回的消息搜不到。run 里只能搜本群。数据库升级时自动给已有消息建立搜索索引。
+- 聊天顶栏新增搜索按钮：输入关键词即可搜索本群消息，结果里高亮匹配的文字，点一下跳到那条消息。
+- listener：Claude Code 的 project 档（指挥者 @）默认也能用你自己在 Claude 里配置的 MCP 服务器（`~/.claude.json` 和项目的 `.mcp.json`），不想要时用 `config --user-mcp off` 关掉；restricted 档不变，仍然只有 pichat 的只读工具。
+
 ## v0.2.9
 
 - 支持 Codex agent：`pair ... --agent codex`（`config --agent codex` 也可以），在本机用 `codex exec --json` 运行，之后用 `codex exec resume <会话>` 续用同一个主会话；会话不存在时自动新建并上报。服务端接受平台 `codex`，网页上显示 Codex 头像（深色方块里的 `>_`）和平台名，配对说明写 `--agent claude|pi|codex`。

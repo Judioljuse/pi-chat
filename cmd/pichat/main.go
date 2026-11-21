@@ -29,7 +29,7 @@ func usage() {
 	fmt.Fprint(os.Stderr, `用法：
   pichat serve [--listen 0.0.0.0:8080] [--data ./data] [--public-url http://localhost:8080]
   pichat admin-link [--data ./data] [--public-url ...]   打印一次性管理员注册链接（1 小时）
-  pichat backup <dir> [--data ./data]                    VACUUM INTO + 复制附件
+  pichat backup <dir> [--data ./data]                    VACUUM INTO + 复制 secret.key 和附件
   pichat version                                         打印版本号
   serve 另有 --trusted-proxies <CIDR,...>（信任其 X-Forwarded-For，默认回环和私网）
              --webhook-allow <CIDR,...>（允许 webhook 访问的内网地址，默认全部禁止）
@@ -37,6 +37,9 @@ func usage() {
 环境变量：PICHAT_LISTEN、PICHAT_DATA、PICHAT_PUBLIC_URL、PICHAT_TRUSTED_PROXIES、PICHAT_WEBHOOK_ALLOW、
           PICHAT_UPDATE、PICHAT_UPDATE_REPO、PICHAT_UPDATE_API、PICHAT_UPDATE_MIRROR、
           PICHAT_SEARCH_PROVIDER（duckduckgo|brave|tavily|bocha|searxng）、PICHAT_SEARCH_KEY、PICHAT_SEARCH_URL
+          （管理页「MCP 工具」里保存过搜索设置时以管理页为准），
+          PICHAT_MCP_ALLOW_PRIVATE=1（外部 MCP 服务器可以是内网/本机地址）、PICHAT_MCP_ALLOW_HTTP=1（本机回环地址可用 http）
+备份包含 pichat.db、secret.key（解密管理页保存的 key 要用）和附件。
 `)
 	os.Exit(2)
 }
@@ -79,6 +82,8 @@ func main() {
 	}
 	cfg.WebhookAllow, err = server.ParseCIDRs(hookAllow)
 	check(err)
+	cfg.MCPAllowPrivate = os.Getenv("PICHAT_MCP_ALLOW_PRIVATE") == "1"
+	cfg.MCPAllowHTTP = os.Getenv("PICHAT_MCP_ALLOW_HTTP") == "1"
 	cfg.Search = tools.SearchConfig{Provider: os.Getenv("PICHAT_SEARCH_PROVIDER"), Key: os.Getenv("PICHAT_SEARCH_KEY"), URL: os.Getenv("PICHAT_SEARCH_URL")}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	switch cmd {

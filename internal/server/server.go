@@ -50,6 +50,11 @@ type Config struct {
 	Search tools.SearchConfig
 	// FetchBlocked are destinations web_fetch refuses (nil: tools.DefaultBlocked). Tests override it.
 	FetchBlocked []*net.IPNet
+	// MCPAllowPrivate lets admin-configured external MCP servers be on private/loopback addresses
+	// (PICHAT_MCP_ALLOW_PRIVATE=1); otherwise they get the web_fetch blocklist.
+	MCPAllowPrivate bool
+	// MCPAllowHTTP allows http:// (not https) for external MCP servers on loopback hosts (PICHAT_MCP_ALLOW_HTTP=1).
+	MCPAllowHTTP bool
 }
 
 // ParseCIDRs parses a comma-separated list of CIDRs or bare IPs.
@@ -134,9 +139,21 @@ type Server struct {
 	listenerOnce sync.Once
 	listenerSum  string
 
-	fetcher   *tools.Fetcher
+	fetcher *tools.Fetcher
+	mcpc    *tools.MCPClient
+
+	// Instance secret (<data>/secret.key) for secrets stored in the database; secretErr when unusable.
+	secret    []byte
+	secretErr string
+
+	toolMu    sync.RWMutex
 	searcher  *tools.Searcher // nil when the search config is invalid; searchErr says why
 	searchErr string
+	search    searchState
+	disabled  map[string]bool // built-in tools switched off on the admin page
+
+	upMu   sync.Mutex
+	upSess map[string]*tools.MCPSession // external MCP server id -> session
 }
 
 func New(cfg Config, db *store.DB, assets Assets) *Server {
@@ -157,12 +174,25 @@ func New(cfg Config, db *store.DB, assets Assets) *Server {
 	if cfg.FetchBlocked == nil {
 		cfg.FetchBlocked = tools.DefaultBlocked
 	}
+	s.cfg.FetchBlocked = cfg.FetchBlocked
 	s.fetcher = tools.NewFetcher(cfg.FetchBlocked)
-	if sr, err := tools.NewSearcher(cfg.Search); err != nil {
-		s.searchErr = err.Error()
-		s.log.Error("搜索服务配置有误，web_search 不可用：" + err.Error())
+	s.mcpc = tools.NewMCPClient(s.upstreamBlocked())
+	s.upSess = map[string]*tools.MCPSession{}
+	if cfg.Data != "" {
+		if key, err := store.LoadOrCreateSecret(cfg.Data); err != nil {
+			s.secretErr = err.Error()
+			s.log.Error("实例密钥 secret.key 不可用，管理页不能保存搜索 key 和 MCP 服务器的 header：" + err.Error())
+		} else {
+			s.secret = key
+		}
 	} else {
-		s.searcher = sr
+		s.secretErr = "没有数据目录"
+	}
+	if err := s.loadTools(); err != nil {
+		s.log.Error("读取工具设置失败", "err", err)
+	}
+	if _, e := s.currentSearcher(); e != "" {
+		s.log.Error("搜索服务配置有误，web_search 不可用：" + e)
 	}
 	s.routes()
 	return s

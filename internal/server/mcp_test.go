@@ -123,7 +123,7 @@ func TestMCPHandshake(t *testing.T) {
 			t.Fatalf("schema: %v", tl)
 		}
 	}
-	if strings.Join(names, ",") != "view_attachment,web_fetch,web_search" {
+	if strings.Join(names, ",") != "view_attachment,web_fetch,web_search,search_messages" {
 		t.Fatalf("tools: %v", names)
 	}
 	_, out = mcpPost(t, e, cc.token, map[string]any{"jsonrpc": "2.0", "id": 4, "method": "ping"})
@@ -164,7 +164,7 @@ func TestMCPHandshake(t *testing.T) {
 	// GET /api/v1 describes the tools.
 	d := e.anon().ok("GET", "", nil)
 	ti := d["tools"].(map[string]any)
-	if ti["searchProvider"] != "duckduckgo" || len(ti["available"].([]any)) != 3 || ti["mcp"] != "http://pichat.test/mcp" {
+	if ti["searchProvider"] != "duckduckgo" || len(ti["available"].([]any)) != 4 || ti["mcp"] != "http://pichat.test/mcp" {
 		t.Fatalf("describe tools: %v", ti)
 	}
 }

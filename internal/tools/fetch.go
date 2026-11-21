@@ -41,12 +41,14 @@ type Fetcher struct {
 
 // literalBlocked rejects URLs whose host is a blocked IP literal before any socket
 // is opened (the dialer check below still covers names and DNS answers).
-func (f *Fetcher) literalBlocked(u *url.URL) error {
+func (f *Fetcher) literalBlocked(u *url.URL) error { return literalBlocked(u, f.blocked) }
+
+func literalBlocked(u *url.URL, blocked []*net.IPNet) error {
 	host := strings.Trim(u.Hostname(), "[]")
 	if i := strings.IndexByte(host, '%'); i >= 0 {
 		host = host[:i]
 	}
-	if ip := net.ParseIP(host); ip != nil && blockedIP(ip, f.blocked) {
+	if ip := net.ParseIP(host); ip != nil && blockedIP(ip, blocked) {
 		return &blockedError{host}
 	}
 	return nil

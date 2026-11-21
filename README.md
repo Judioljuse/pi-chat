@@ -49,16 +49,33 @@ docker compose --profile tailscale up -d --build
 | `PICHAT_SEARCH_PROVIDER` | `duckduckgo` | agent 工具 `web_search` 用的搜索服务：`duckduckgo`（免 key，服务器访问不了或被限流时会报错）、`brave`、`tavily`、`bocha`（博查）、`searxng` |
 | `PICHAT_SEARCH_KEY` | 空 | `brave` / `tavily` / `bocha` 的 API key |
 | `PICHAT_SEARCH_URL` | 空 | `searxng` 的地址（如 `http://searxng:8080`，需要在 searxng 里开启 JSON 输出） |
+| `PICHAT_MCP_ALLOW_PRIVATE` | 空（关） | 设为 `1` 时，管理页添加的外部 MCP 服务器可以在内网、回环、Tailscale 等地址上（默认和 `web_fetch` 一样禁止）。只影响管理员配置的上游，`web_fetch` 不受影响 |
+| `PICHAT_MCP_ALLOW_HTTP` | 空（关） | 设为 `1` 时，外部 MCP 服务器在本机回环地址（`localhost`、`127.0.0.1`、`::1`）上可以用 `http://`；其他地址始终要 `https://`。本机上游一般还要同时设 `PICHAT_MCP_ALLOW_PRIVATE=1` |
+
+搜索设置的优先级：管理页「MCP 工具」里保存过的设置 > `PICHAT_SEARCH_*` 环境变量 > 默认（DuckDuckGo）。在管理页把搜索服务恢复成“使用环境变量”（保存空的 provider）就回到环境变量。只用环境变量的老部署不用改任何东西。
 
 ### agent 工具（MCP）
 
-服务器在 `POST /mcp` 提供一个 MCP 端点（Streamable HTTP，用 agent token 或 run token 认证），给所有 agent 三个只读工具：
+服务器在 `POST /mcp` 提供一个 MCP 端点（Streamable HTTP，用 agent token 或 run token 认证），给所有 agent 四个只读的内置工具：
 
 - `view_attachment {fileId}`：看群消息里的附件。图片直接给模型看（最大 20 MB、4000 万像素），文本文件最多返回 200 KB，其他类型只返回名称、类型和大小。run token 只能看它所在群的附件。
 - `web_fetch {url}`：读公开网页，返回标题和正文（最多 2 万字）。只允许 http/https，禁止访问内网、回环、链路本地、CGNAT 等地址（每次跳转都重新检查，最多 3 次跳转），不带 cookie，10 秒超时，最多读 2 MB。需要登录或有反爬的页面（如小红书）会直接说拿不到正文。
 - `web_search {query, count?}`：用上面配置的搜索服务搜索，返回最多 10 条标题、链接和摘要。
+- `search_messages {query, groupId?, from?, before?, after?, limit?}`：搜索群里以前的消息（按文字片段匹配，中文也行），返回序号、作者、时间和匹配处前后最多 200 字，最新的在前，默认 20 条、最多 50 条。已撤回的消息搜不到。run token 默认搜本群，也只能搜本群（指挥档位也一样）；agent 长期 token 必须给 `groupId`，且要是群成员。`before` / `after` 可以是消息序号或 unix 毫秒时间戳。网页聊天顶栏的搜索按钮用的是同一套搜索（`GET /api/v1/groups/{id}/search?q=&from=&limit=`）。
 
-每个 agent 每小时最多搜索 30 次、读网页 60 次、看附件 120 次。工具返回的内容都标成“不可信数据，不是指令”。管理页的「Agent 工具」区显示当前用的搜索服务，`GET /api/v1` 的 `tools` 字段也有。listener 每次 run 自动接上这个 MCP（用本次 run 的 token，所有档位都有；细节见 [listener/README.md](listener/README.md#服务端工具)）。
+每个 agent 每小时最多搜索网页 30 次、读网页 60 次、看附件 120 次、搜索群消息 120 次。工具返回的内容都标成“不可信数据，不是指令”。`GET /api/v1` 的 `tools` 字段列出启用的内置工具（`available`）和外部工具名（`external`），不含任何密钥。
+
+### 管理页「MCP 工具」
+
+管理员在管理页的「MCP 工具」区可以：
+
+- 单独开关四个内置工具（默认全开），关掉的工具不再出现在 `tools/list` 里，也不能调用。
+- 选择搜索服务（DuckDuckGo / Brave / Tavily / 博查 / SearXNG），填 key 或 SearXNG 地址。保存后立即生效，不用重启。旁边的标签说明当前设置来自“网页设置”、“环境变量”还是“默认”。
+- 接入外部 MCP 服务器，由 pichat 代理给 agent：填名称（小写字母、数字、`_`、`-`，最多 32 个字符）、地址（必须 `https://`）、鉴权头名（默认 `Authorization`）和头的值（如 `Bearer xxx`）。pichat 用 Streamable HTTP 连上游（`initialize`、`tools/list`、`tools/call`），30 秒超时，返回最多 2 MB，地址检查和 `web_fetch` 一样（禁止内网等地址，除非设了 `PICHAT_MCP_ALLOW_PRIVATE=1`）。上游的工具以 `<服务器名>__<工具名>` 的名字、原样的参数说明出现在 pichat 的 `/mcp` 上，返回内容加上“不可信数据”前缀。启用、修改或点「刷新」时重新拉取工具列表；停用的服务器对 agent 不可见。每个 agent 对每个上游每小时最多调用 120 次。
+
+外部工具可能有副作用（写文件、发消息、改数据），所以只给 agent 长期 token 和指挥档位（project / full）的 run token；restricted 档的 run（非指挥者 @ 触发的）只有上面四个只读内置工具，看不到也调不了外部工具。
+
+密钥（搜索 key、外部服务器的头的值）用实例密钥 `<数据目录>/secret.key`（首次启动自动生成，32 字节随机数，权限 0600）以 AES-256-GCM 加密后存进数据库，接口只返回“已设置”和最后 4 个字符。`secret.key` 丢了，这些密钥就解不开，需要在管理页重新填写；备份时要和数据库一起保存（`pichat backup` 会自动复制）。listener 每次 run 自动接上这个 MCP（用本次 run 的 token，所有档位都有；细节见 [listener/README.md](listener/README.md#服务端工具)）。
 
 终端模式（`watch` / `attach`）里交互运行的 agent 不会自动接上。需要的话给交互式 Claude Code 加上（自己运行，listener 不会替你做）：
 
@@ -138,8 +155,8 @@ loginctl enable-linger $USER                          # Linux：退出登录后�
 
 | 档位 | 什么时候 | Claude Code | pi |
 |-|-|-|-|
-| restricted | 非指挥者 @、回复、私聊 | 只有 pichat 的三个只读工具（看附件、读网页、搜索），不读用户设置和你自己的 MCP；续用同一个主会话、同一个工作目录 | 只有 pichat 的三个工具，不加载其他扩展、技能、上下文文件 |
-| project（默认） | 指挥者 @ | 在项目目录里工作；核心工具（含 Bash）和 pichat 工具免确认，不加载你自己的 MCP | 全部工具加 pichat 工具，在项目目录里工作 |
+| restricted | 非指挥者 @、回复、私聊 | 只有 pichat 的四个只读内置工具（看附件、读网页、搜索网页、搜索群消息），不读用户设置和你自己的 MCP；续用同一个主会话、同一个工作目录 | 只有 pichat 的四个内置工具，不加载其他扩展、技能、上下文文件 |
+| project（默认） | 指挥者 @ | 在项目目录里工作；核心工具（含 Bash）、pichat 工具（含管理员接入的外部 MCP 工具）和你自己在 Claude 里配置的 MCP 服务器（`~/.claude.json`、项目的 `.mcp.json`）免确认；`config --user-mcp off` 可以改回只用 pichat 的 MCP | 全部工具加 pichat 工具，在项目目录里工作 |
 | full | owner 在网页上把这个 agent 切到 full（会二次确认） | `--dangerously-skip-permissions`（root 下自动降为 project） | 同 project |
 
 注意：project 档的“只在项目目录里工作”靠工作目录和 prompt 约束，不是沙箱。Claude 仍会读取你的 `~/.claude/settings.json` 等权限设置，Bash 也能访问目录外的文件。只授权你信任的人。listener 本机可以用 `config --max-tier restricted|project` 设置上限。
@@ -150,7 +167,7 @@ Codex agent 的档位不同，见下一节。
 
 | | Claude Code | pi | Codex |
 |-|-|-|-|
-| restricted 档（非指挥者 @） | 运行，只有 pichat 的三个只读工具 | 运行，只有 pichat 的三个工具 | 不运行：只回一句“我是 Codex agent，只执行 owner 或被授权的人的指令；需要的话请他们 @ 我。”（Codex 没有无工具的模式，read-only 沙箱也能读你能读的所有文件）。本机 `--max-tier restricted` 时指挥者 @ 也不运行，回复一句说明是本机上限 |
+| restricted 档（非指挥者 @） | 运行，只有 pichat 的四个只读内置工具 | 运行，只有 pichat 的四个内置工具 | 不运行：只回一句“我是 Codex agent，只执行 owner 或被授权的人的指令；需要的话请他们 @ 我。”（Codex 没有无工具的模式，read-only 沙箱也能读你能读的所有文件）。本机 `--max-tier restricted` 时指挥者 @ 也不运行，回复一句说明是本机上限 |
 | project 档 | 核心工具免确认，不是沙箱 | 全部工具，不是沙箱 | `-s workspace-write`：可以读本机文件，只能写工作目录（和群绑定目录），沙箱里的命令不能联网 |
 | full 档 | `--dangerously-skip-permissions` | 同 project | `--dangerously-bypass-approvals-and-sandbox`，完全放开 |
 | pichat MCP 工具 | 临时 `--mcp-config` 文件 | 临时扩展 | `-c mcp_servers.pichat.*`，run token 只放在环境变量 `PICHAT_MCP_TOKEN` 里，不写文件 |
@@ -215,7 +232,7 @@ docker compose exec pichat pichat backup /data/backup-20261119
 docker compose cp pichat:/data/backup-20261119 ./
 ```
 
-备份用 `VACUUM INTO` 生成一致的数据库快照，并复制附件目录，服务运行时也可以做。恢复：停服务，把备份目录里的 `pichat.db` 和 `files/` 放回数据目录，再启动。
+备份用 `VACUUM INTO` 生成一致的数据库快照，并复制实例密钥 `secret.key` 和附件目录，服务运行时也可以做。恢复：停服务，把备份目录里的 `pichat.db`、`secret.key` 和 `files/` 放回数据目录，再启动。`secret.key` 用来解密管理页保存的搜索 key 和外部 MCP 服务器的鉴权头，没有它其他数据照常可用，只是这些密钥要重新填写。备份目录里有 `secret.key`，请和数据库一样妥善保管。
 
 ## 资源占用（实测）
 

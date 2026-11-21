@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronLeft, Settings, UserPlus, Users } from 'lucide-react'
+import { ChevronLeft, Search, Settings, UserPlus, Users } from 'lucide-react'
 import { AvatarGroup } from '@/components/motion/avatar-group'
 import { PrincipalAvatar } from '@/components/pichat/avatar'
 import { agentStateText } from '@/components/pichat/agent-state'
@@ -16,12 +16,16 @@ export function ChatHeader({
   info,
   summary,
   onMembers,
+  onSearch,
+  searchOpen,
   workingIds,
 }: {
   gid: string
   info?: Group
   summary?: GroupSummary
   onMembers: () => void
+  onSearch?: () => void
+  searchOpen?: boolean
   workingIds?: Set<string>
 }) {
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -50,6 +54,19 @@ export function ChatHeader({
       </div>
       {info && (
         <>
+          {onSearch && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground aria-pressed:bg-accent aria-pressed:text-foreground"
+              aria-label="搜索消息"
+              aria-pressed={!!searchOpen}
+              title="搜索消息"
+              onClick={onSearch}
+            >
+              <Search />
+            </Button>
+          )}
           <div className="hidden items-center gap-1 sm:flex">
             <AvatarGroup
               members={people}

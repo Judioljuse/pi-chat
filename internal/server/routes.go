@@ -34,6 +34,13 @@ func (s *Server) routes() {
 	h("GET "+p+"/admin/update", human|adminOnly, s.getUpdate)
 	h("POST "+p+"/admin/update", human|adminOnly, s.postUpdate)
 	h("POST "+p+"/admin/update/rollback", human|adminOnly, s.postRollback)
+	h("GET "+p+"/admin/tools", human|adminOnly, s.adminTools)
+	h("PUT "+p+"/admin/tools/builtin", human|adminOnly, s.putBuiltin)
+	h("PUT "+p+"/admin/tools/search", human|adminOnly, s.putSearch)
+	h("POST "+p+"/admin/tools/servers", human|adminOnly, s.postUpstream)
+	h("PATCH "+p+"/admin/tools/servers/{id}", human|adminOnly, s.patchUpstream)
+	h("DELETE "+p+"/admin/tools/servers/{id}", human|adminOnly, s.deleteUpstream)
+	h("POST "+p+"/admin/tools/servers/{id}/refresh", human|adminOnly, s.postRefreshUpstream)
 
 	h("POST "+p+"/pairing-codes", human, s.createPairCode)
 	h("GET "+p+"/agents", human, s.listAgents)
@@ -73,6 +80,7 @@ func (s *Server) routes() {
 	h("POST "+p+"/groups/{id}/messages", anyone, s.sendMessage)
 	h("POST "+p+"/groups/{id}/read", anyone, s.markRead)
 	h("DELETE "+p+"/groups/{id}/messages/{seq}", anyone, s.recall)
+	h("GET "+p+"/groups/{id}/search", anyone, s.searchGroupMessages)
 
 	h("GET "+p+"/inbox", human|agentTok|runCmd, s.inbox)
 	s.mux.HandleFunc("GET "+p+"/events", s.events)
@@ -144,7 +152,8 @@ func (s *Server) describe(c *ctx) (any, error) {
 			"POST /groups/{id}/messages {text,mentions,replyTo,opKey,files,ignoreNew,until}",
 			"POST /groups/{id}/read {seq}", "DELETE /groups/{id}/messages/{seq}",
 			"POST /chats {with}", "GET /contacts", "GET /principals/{id}", "POST /files (multipart file)", "GET /files/{id}",
-			"POST /mcp (MCP Streamable HTTP, Bearer agent/run token; tools: view_attachment, web_fetch, web_search)",
+			"GET /groups/{id}/search?q=&from=&before=&after=&limit=",
+			"POST /mcp (MCP Streamable HTTP, Bearer agent/run token; tools: view_attachment, web_fetch, web_search, search_messages, plus <server>__<tool> from admin-configured MCP servers for agent tokens and commander runs)",
 			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?,listener?:{sha256,version,autoUpdate},dirs?:{main,default,binds:{groupId:dir},repo?:{root,branch,worktree,path},repos?:{dir:{root,branch,worktree,path}}}}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
 		},
 		"tools": s.toolsInfo(),

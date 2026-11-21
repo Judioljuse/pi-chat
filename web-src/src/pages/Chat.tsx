@@ -4,6 +4,7 @@ import { ChatHeader } from '@/components/chat/chat-header'
 import { Composer, type ComposerHandle, type Outgoing } from '@/components/chat/composer'
 import { MemberPanel } from '@/components/chat/member-panel'
 import { MessageList } from '@/components/chat/message-list'
+import { SearchPanel, SEARCH_PANEL_PX } from '@/components/chat/search-panel'
 import { mentionTargets, memberName, reportWake, type Pending } from '@/components/chat/util'
 import { Empty } from '@/components/pichat/page'
 import type { WorkingAgent } from '@/components/pichat/working-indicator'
@@ -57,13 +58,30 @@ export function Chat({ gid }: { gid: string }) {
   const [sentTick, setSentTick] = useState(0)
   const [recalling, setRecalling] = useState<Message | null>(null)
   const wide = useWide()
-  const [membersOpen, setMembersOpen] = useState(false)
+  const [membersOpen, setMembersOpenRaw] = useState(false)
+  const [searchOpen, setSearchOpenRaw] = useState(false)
+  // Desktop has one side slot: opening one panel closes the other.
+  const setMembersOpen = useCallback((o: boolean | ((x: boolean) => boolean)) => {
+    setMembersOpenRaw((prev) => {
+      const next = typeof o === 'function' ? o(prev) : o
+      if (next) setSearchOpenRaw(false)
+      return next
+    })
+  }, [])
+  const setSearchOpen = useCallback((o: boolean | ((x: boolean) => boolean)) => {
+    setSearchOpenRaw((prev) => {
+      const next = typeof o === 'function' ? o(prev) : o
+      if (next) setMembersOpenRaw(false)
+      return next
+    })
+  }, [])
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const composer = useRef<ComposerHandle>(null)
 
   useEffect(() => {
     setErr('')
+    setSearchOpenRaw(false)
     openChat(gid).catch((e) => setErr(errorText(e)))
   }, [gid])
 
@@ -194,8 +212,16 @@ export function Chat({ gid }: { gid: string }) {
 
   const ready = info && chat?.loaded
   return (
-    <div className="flex h-full min-h-0 flex-col" style={{ '--panel': wide && membersOpen && info ? '280px' : '0px' } as CSSProperties}>
-      <ChatHeader gid={gid} info={info} summary={summary} onMembers={() => setMembersOpen((o) => !o)} workingIds={workingIds} />
+    <div className="flex h-full min-h-0 flex-col" style={{ '--panel': !wide || !info ? '0px' : membersOpen ? '280px' : searchOpen ? `${SEARCH_PANEL_PX}px` : '0px' } as CSSProperties}>
+      <ChatHeader
+        gid={gid}
+        info={info}
+        summary={summary}
+        onMembers={() => setMembersOpen((o) => !o)}
+        onSearch={() => setSearchOpen((o) => !o)}
+        searchOpen={searchOpen}
+        workingIds={workingIds}
+      />
       <div className="flex min-h-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" {...(ready ? dnd : {})}>
           {!ready ? (
@@ -243,6 +269,7 @@ export function Chat({ gid }: { gid: string }) {
             </>
           )}
         </div>
+        {info && <SearchPanel gid={gid} open={searchOpen} onOpenChange={setSearchOpen} wide={wide} />}
         {info && (
           <MemberPanel info={info} meId={meId} workingIds={workingIds} open={membersOpen} onOpenChange={setMembersOpen} wide={wide} />
         )}

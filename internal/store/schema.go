@@ -201,4 +201,27 @@ CREATE TABLE agent_group_names (
 	`
 ALTER TABLE groups ADD COLUMN hop_limit INTEGER;
 ALTER TABLE groups ADD COLUMN agent_wakes_per_hour INTEGER;
+`,
+	// 8: admin tool settings (DB values override the PICHAT_SEARCH_* env vars; secrets are AES-GCM
+	// sealed with <data>/secret.key) and external MCP servers proxied on /mcp. The message search
+	// index (messages_fts) is created by ensureFTS, not here, so a SQLite without trigram still opens.
+	`
+CREATE TABLE tool_settings (
+  key TEXT PRIMARY KEY,          -- builtin.<tool> ('on'/'off')，search.provider / search.url（value），search.key（secret）
+  value TEXT,
+  secret BLOB,                   -- store.Seal(secret.key, 明文, 'tool_settings:'+key)
+  updated_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE mcp_servers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,     -- a-z0-9_-，<= 32；工具名前缀 <name>__
+  url TEXT NOT NULL,
+  header_name TEXT NOT NULL DEFAULT 'Authorization',
+  secret_enc BLOB,               -- header 值，store.Seal(secret.key, 明文, 'mcp_servers:'+id)
+  enabled INTEGER NOT NULL DEFAULT 1,
+  tools_cache TEXT,              -- 上游 tools/list 的 JSON 数组 [{name,description,inputSchema,...}]
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+) STRICT;
 `}
