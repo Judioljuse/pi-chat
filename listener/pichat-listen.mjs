@@ -999,6 +999,10 @@ class Listener {
       const ownerId = meRes.ownerId || group.members?.find((m) => m.id === me)?.ownerId;
       const prompt = buildPrompt({ nonce: crypto.randomBytes(4).toString('hex'), group, msgs, skipped: msgRes.skipped, trigger, tier, cwd, bindDir, myNick, ownerNotes: meRes.ownerNotes, ownerId, ownerName: meRes.ownerName, me, tools: hasMcp, agent: this.config.agent, askers });
       const env = { ...process.env, ...readEnvFile(this.dir) };
+      // Restricted runs pass --setting-sources "" (no permission rules, hooks or plugins), which also
+      // drops the gateway env and default model kept in ~/.claude/settings.json. Apply just those, as
+      // the other tiers get them, or the model can't be reached ("Not logged in" / unrecognized model).
+      if (tier === 'restricted' && this.config.agent === 'claude') applyClaudeGateway(env, this.config);
       for (const k of ['PICHAT_TOKEN', 'PICHAT_SERVER', 'PICHAT_GROUP', 'PICHAT_NAME', 'PICHAT_SESSION_ID', 'CLAUDE_CODE_SESSION_ID', 'PI_SESSION_ID']) delete env[k];
       if (tier !== 'restricted') Object.assign(env, { PICHAT_TOKEN: runToken, PICHAT_SERVER: this.config.server, PICHAT_GROUP: gid });
 
@@ -1059,6 +1063,13 @@ class Listener {
           this.saveState();
           detail += '（5 分钟后重试）';
           setTimeout(() => this.enqueue(gid, { retry: { wake, lastSeq, fromSeq } }), RETRY_MS);
+        } else {
+          // Second failure for the same messages: say so, so whoever asked isn't left waiting.
+          const text = `我这次没能运行：${failReason(r.error)}。详情在 owner 的「我的 agent」页面，修好后再 @ 我。`;
+          try {
+            await this.call('POST', `/groups/${gid}/messages`, { text, replyTo: trigger.seq, opKey: `${wake?.wakeId || 'job'}:${lastSeq}:fail`, ignoreNew: true }, await freshToken(tier));
+            detail += '（已在群里说明）';
+          } catch (e) { this.log('发送失败说明出错：', e.message); }
         }
       }
       await this.call('POST', '/runs', { groupId: gid, ok: r.ok, detail: detail.slice(0, 1000) }).catch((e) => this.log('上报 run 失败：', e.message));
@@ -1287,6 +1298,24 @@ export default function (pi) {
       child.on('close', (code, signal) => done(code, signal));
     });
   }
+}
+
+// The env block and default model from <claude config>/settings.json, for runs that skip setting sources.
+function applyClaudeGateway(env, config) {
+  const st = readJSON(path.join(claudeDir(env), 'settings.json'), {}) || {};
+  for (const [k, v] of Object.entries(st.env || {})) if (typeof v === 'string') env[k] = v;
+  if (!config.model && !env.ANTHROPIC_MODEL && typeof st.model === 'string' && st.model) env.ANTHROPIC_MODEL = st.model;
+}
+
+// A short, path-free reason for the group when a run keeps failing; details go to the owner via /runs.
+function failReason(err) {
+  const e = String(err || '');
+  if (/Not logged in|\/login/i.test(e)) return '模型未登录（这台机器的网关配置没有生效）';
+  if (/unrecognized_model|model.*not (found|exist|support)/i.test(e)) return '模型名不被网关识别';
+  if (/超过 \d+ 分钟|没有输出/.test(e)) return '运行超时';
+  if (/content safety|安全/i.test(e)) return '请求被模型网关的内容安全策略拒绝';
+  if (/rate.?limit|429|quota|额度/i.test(e)) return '模型额度或限流';
+  return '运行出错';
 }
 
 function killTree(child, sig) {
