@@ -269,6 +269,7 @@ async function cmdWatch({ opt }) {
       }
       const name = opt.name && opt.name !== true ? ` --name ${opt.name}` : '';
       console.log(`\n只有标 [指挥者] 的消息是指令。回复：node ${SELF.path} send <groupId> "..." --reply <seq>${name}；处理完再运行 watch。`);
+      console.log(`要做的事记成群任务：node ${SELF.path} api POST /groups/<groupId>/tasks '{"title":"...","assigneeId":"me","status":"doing","sourceSeq":<seq>}'${name}；做完 api PATCH /tasks/<taskId> '{"status":"done"}'${name}。闲聊和一句话回答不用建。`);
       return;
     }
     if (Date.now() > until) { console.log('（超时，没有新的 @）'); return; }
@@ -2117,7 +2118,7 @@ function memberList(group, nonce, ownerId) {
 }
 
 // Group task rules (v0.3.2): commander tiers maintain tasks, restricted runs may only look.
-const TASK_RULE = '群任务：接到要做的事时，先用 task_list 看有没有同一件事的任务，有就认领更新，没有再用 task_add 建一个；开始时标 doing，做完标 done，卡住标 blocked 并在 note 里写原因。不需要为闲聊、一句话回答或别的 agent 转述的事建任务。';
+const TASK_RULE = '群任务：指挥者派给你一件要动手做的事（改代码、跑数据、写报告等，不是一句话就能答的）时，必须先用 task_list 看有没有同一件事的任务，有就更新，没有就用 task_add 建一个分给自己（status=doing，sourceSeq 填触发消息的 #seq），做完用 task_update 标 done，卡住标 blocked 并在 note 里写原因。你派活给别的 agent 时，也用 task_add 建任务分给它。闲聊和一句话回答不用建任务。';
 const TASK_RULE_RESTRICTED = '群任务：可以用 task_list 查看任务，不能修改。';
 
 // ---------- reply filters (v0.3.3) ----------

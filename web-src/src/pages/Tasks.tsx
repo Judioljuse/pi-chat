@@ -45,7 +45,7 @@ export function Tasks() {
   const info = useStore((s) => s.info)
   const lastEvent = useStore((s) => s.lastTaskEvent)
   const tick = useStore((s) => s.taskTick)
-  const [scope, setScope] = useState<Scope>('me')
+  const [scope, setScope] = useState<Scope>('all')
   const [person, setPerson] = useState(ANYONE)
   const [status, setStatus] = useState<'open' | 'all'>('open')
   const [tasks, setTasks] = useState<Task[] | null>(null)

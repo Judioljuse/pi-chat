@@ -36,7 +36,7 @@ const ERRORS: Record<string, string> = {
 
 /**
  * Browser speech-to-text. onText(final) gets each recognized phrase; interim shows the phrase in progress.
- * Stops on silence (one utterance per tap), which also suits iOS Safari.
+ * Listens until stop is tapped; text still in progress at that point is kept, not dropped.
  */
 export function useSpeech(onText: (text: string) => void, onError: (msg: string) => void) {
   const [listening, setListening] = useState(false)
@@ -44,6 +44,15 @@ export function useSpeech(onText: (text: string) => void, onError: (msg: string)
   const rec = useRef<SpeechRecognitionLike | null>(null)
   const cb = useRef({ onText, onError })
   cb.current = { onText, onError }
+
+  // Text heard but not yet handed to onText: browsers (iOS Safari above all) often never mark the
+  // last phrase final, so stop / end commits whatever is still pending instead of dropping it.
+  const pending = useRef('')
+  const flush = () => {
+    const t = pending.current.trim()
+    pending.current = ''
+    if (t) cb.current.onText(t)
+  }
 
   const stop = useCallback(() => rec.current?.stop(), [])
 
@@ -54,24 +63,37 @@ export function useSpeech(onText: (text: string) => void, onError: (msg: string)
     const r = new C()
     r.lang = 'zh-CN'
     r.interimResults = true
-    r.continuous = false
+    // Keep listening until the user taps stop: one-shot mode ends on the first pause (often before
+    // anything is recognized, especially on iOS). Android Chrome repeats earlier text in every
+    // continuous result, so it stays one-shot there.
+    r.continuous = !/Android/i.test(navigator.userAgent)
+    const done = new Set<number>()
+    let heard = false
     r.onresult = (e) => {
       let live = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (done.has(i)) continue
         const t = e.results[i][0].transcript
-        if (e.results[i].isFinal) cb.current.onText(t)
-        else live += t
+        if (t.trim()) heard = true
+        if (e.results[i].isFinal) {
+          done.add(i)
+          if (t.trim()) cb.current.onText(t.trim())
+        } else live += t
       }
+      pending.current = live
       setInterim(live)
     }
     r.onerror = (e) => {
-      if (e.error !== 'aborted') cb.current.onError(ERRORS[e.error] || `语音输入出错：${e.error}`)
+      if (e.error === 'aborted' || (e.error === 'no-speech' && heard)) return
+      cb.current.onError(ERRORS[e.error] || `语音输入出错：${e.error}`)
     }
     r.onend = () => {
+      flush()
       rec.current = null
       setListening(false)
       setInterim('')
     }
+    pending.current = ''
     rec.current = r
     try {
       r.start()

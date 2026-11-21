@@ -327,7 +327,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       {speech.listening && (
         <div className="mx-1 mb-1 flex items-center gap-2 rounded-control bg-destructive/5 py-1 pr-1 pl-2.5 text-[12.5px] text-muted-foreground animate-fade-up" aria-live="polite">
           <span className="size-1.5 shrink-0 rounded-full bg-destructive motion-safe:animate-pulse" />
-          <span className="min-w-0 truncate">{speech.interim || '正在听…说完会自动转成文字'}</span>
+          <span className="min-w-0 truncate">{speech.interim || '正在听…说完点停止，文字会填进输入框'}</span>
         </div>
       )}
       {reply && (
@@ -426,7 +426,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       )}
                       aria-label={speech.listening ? '停止语音输入' : '语音输入'}
                       aria-pressed={speech.listening}
-                      title={speech.listening ? '停止语音输入' : '语音输入（说完自动转成文字）'}
+                      title={speech.listening ? '停止语音输入' : '语音输入（说完点停止）'}
                       onClick={() => (speech.listening ? speech.stop() : speech.start())}
                     >
                       {speech.listening ? <Square className="size-3.5 fill-current" /> : <Mic />}
