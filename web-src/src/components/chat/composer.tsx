@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { AtSign, ChevronDown, ImageIcon, Paperclip, X } from 'lucide-react'
+import { AtSign, ChevronDown, ImageIcon, Mic, Paperclip, Square, X } from 'lucide-react'
 import { PromptInput } from '@/components/agents/prompt-input'
 import {
   DropdownMenu,
@@ -23,6 +23,7 @@ import { randId } from '@/lib/format'
 import { agentStateOf, terminalModeOf, notify } from '@/lib/store'
 import type { FileRef, Group, Member, Message } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { speechSupported, useSpeech } from '@/lib/hooks/use-speech'
 import { isCoarse, MAX_FILE_SIZE, MAX_FILES, memberName, snippet } from './util'
 
 export interface Outgoing {
@@ -68,6 +69,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const imageIn = useRef<HTMLInputElement>(null)
   const picked = useRef(new Map<string, string>())
   const coarse = useMemo(isCoarse, [])
+  // Room for the @ list between the top of the visible viewport and the composer: on phones the
+  // keyboard shrinks the visual viewport, so a fixed max-height would hide most of the list.
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const [listRoom, setListRoom] = useState(288)
+  useEffect(() => {
+    if (!pop) return
+    const vv = window.visualViewport
+    const measure = () => {
+      const top = anchorRef.current?.getBoundingClientRect().top ?? 0
+      const viewTop = vv ? vv.offsetTop : 0
+      setListRoom(Math.max(120, Math.min(288, Math.floor(top - viewTop - 56))))
+    }
+    measure()
+    vv?.addEventListener('resize', measure)
+    vv?.addEventListener('scroll', measure)
+    window.addEventListener('resize', measure)
+    return () => {
+      vv?.removeEventListener('resize', measure)
+      vv?.removeEventListener('scroll', measure)
+      window.removeEventListener('resize', measure)
+    }
+  }, [pop])
 
   useEffect(() => {
     sessionStorage.setItem(draftKey(gid), text)
@@ -164,7 +187,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       .filter((m) => m.id !== meId && ((m.nick || '').toLowerCase().includes(q) || (m.displayName || '').toLowerCase().includes(q)))
       .map((m) => ({ id: m.id, nick: m.nick || m.displayName, member: m }))
     if (canAll && 'all'.startsWith(q)) list.unshift({ id: '*all', nick: 'all', all: true })
-    return list.slice(0, 8)
+    // All matches: the list scrolls (its height follows the room above the keyboard).
+    return list.slice(0, 100)
   }, [pop, info.members, meId, canAll])
 
   useEffect(() => {
@@ -221,6 +245,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     el.setSelectionRange(s + ins.length, s + ins.length)
     setText(v)
   }
+
+  const canSpeak = useMemo(speechSupported, [])
+  const speech = useSpeech(
+    (t) => {
+      const el = ta.current
+      const add = t.trim()
+      if (!add) return
+      const v = el ? el.value : text
+      const s = el ? el.selectionStart : v.length
+      const e = el ? el.selectionEnd : v.length
+      const ins = (s > 0 && !/\s$/.test(v.slice(0, s)) && /^[A-Za-z0-9]/.test(add) ? ' ' : '') + add
+      const nv = v.slice(0, s) + ins + v.slice(e)
+      if (el) {
+        el.value = nv
+        el.setSelectionRange(s + ins.length, s + ins.length)
+      }
+      setText(nv)
+    },
+    (msg) => notify(msg, 5000),
+  )
 
   // ---- send ----
 
@@ -280,6 +324,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const header = (
     <>
+      {speech.listening && (
+        <div className="mx-1 mb-1 flex items-center gap-2 rounded-control bg-destructive/5 py-1 pr-1 pl-2.5 text-[12.5px] text-muted-foreground animate-fade-up" aria-live="polite">
+          <span className="size-1.5 shrink-0 rounded-full bg-destructive motion-safe:animate-pulse" />
+          <span className="min-w-0 truncate">{speech.interim || '正在听…说完会自动转成文字'}</span>
+        </div>
+      )}
       {reply && (
         <div className="mx-1 mb-1 flex items-center gap-2 rounded-control bg-accent/70 py-1 pr-1 pl-2.5 text-[12.5px] text-muted-foreground animate-fade-up">
           <span className="min-w-0 flex-1 truncate">
@@ -320,7 +370,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       />
       <Popover open={!!pop && candidates.length > 0} onOpenChange={(o) => !o && setPop(null)}>
         <PopoverAnchor asChild>
-          <div className="relative">
+          <div ref={anchorRef} className="relative">
             <PromptInput
               value={text}
               onValueChange={(v) => {
@@ -365,6 +415,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   >
                     <AtSign />
                   </Button>
+                  {canSpeak && (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      type="button"
+                      className={cn(
+                        'rounded-control text-muted-foreground hover:bg-accent',
+                        speech.listening && 'bg-destructive/10 text-destructive hover:bg-destructive/15',
+                      )}
+                      aria-label={speech.listening ? '停止语音输入' : '语音输入'}
+                      aria-pressed={speech.listening}
+                      title={speech.listening ? '停止语音输入' : '语音输入（说完自动转成文字）'}
+                      onClick={() => (speech.listening ? speech.stop() : speech.start())}
+                    >
+                      {speech.listening ? <Square className="size-3.5 fill-current" /> : <Mic />}
+                    </Button>
+                  )}
                   {agents.length > 0 && (
                     <DropdownMenu>
                       <DropdownMenuTrigger>
@@ -445,7 +512,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 </span>
               )}
             </div>
-            <CommandList>
+            <CommandList style={{ maxHeight: listRoom }} className="overscroll-contain">
               {candidates.map((c) => (
                 <CommandItem
                   key={c.id}
