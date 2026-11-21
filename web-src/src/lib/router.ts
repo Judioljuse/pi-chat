@@ -10,6 +10,12 @@ export function routeSeq(hash = location.hash): number | null {
   return v && /^[1-9]\d{0,8}$/.test(v) ? Number(v) : null
 }
 
+/** "#/g/<id>?tasks": open the task panel once the chat is open. */
+export function routeTasks(hash = location.hash): boolean {
+  const q = hash.indexOf('?')
+  return q >= 0 && new URLSearchParams(hash.slice(q + 1)).has('tasks')
+}
+
 export function parseRoute(hash = location.hash): Route {
   const p = hash.replace(/^#\/?/, '').replace(/\?.*$/, '').split('/').map((x) => {
     try {
@@ -32,6 +38,8 @@ export function parseRoute(hash = location.hash): Route {
       return { name: 'admin' }
     case 'me':
       return { name: 'me' }
+    case 'tasks':
+      return { name: 'tasks' }
     default:
       return { name: 'home' }
   }
@@ -63,6 +71,12 @@ export function syncRoute() {
   }
   if (me && r.name === 'login') {
     location.hash = '#/'
+    return
+  }
+  if (r.name === 'chat' && routeTasks()) {
+    // "#/g/<id>?tasks": open the group's task panel (link from the #/tasks board), then drop the flag.
+    history.replaceState(history.state, '', `#/g/${encodeURIComponent(r.gid)}`)
+    setState({ route: r, taskPanel: r.gid })
     return
   }
   const seq = r.name === 'chat' ? routeSeq() : null

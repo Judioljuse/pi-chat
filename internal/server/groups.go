@@ -114,7 +114,7 @@ func (s *Server) groupJSON(q querier, a *actor, gid string) (obj, error) {
 	}
 	hop, wakes := s.groupLimits(q, gid)
 	return obj{"id": g.ID, "kind": g.Kind, "name": name, "topic": g.Topic, "ownerId": g.OwnerID, "lastSeq": g.LastSeq,
-		"myRole": myRole, "members": ms, "working": s.work.list(gid), "createdAt": g.CreatedAt,
+		"myRole": myRole, "members": ms, "working": s.work.list(gid), "createdAt": g.CreatedAt, "openTasks": s.openTaskCount(q, gid),
 		"limits": obj{"hopLimit": hop, "agentWakesPerHour": wakes, "default": hop == hopLimit && wakes == agentWakesPerHour}}, nil
 }
 
@@ -255,6 +255,9 @@ func (s *Server) removeMember(tx *sql.Tx, after *[]func(), gid, pid, why string)
 			return err
 		}
 		nicks = append(nicks, nick)
+		if err := s.unassignTasks(tx, after, gid, id); err != nil {
+			return err
+		}
 		*after = append(*after, func() { s.hub.sendHumans(id, encodeEvent(0, "groups", obj{})) })
 	}
 	if len(nicks) > 0 && why != "" {

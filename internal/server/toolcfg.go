@@ -15,14 +15,18 @@ import (
 // DuckDuckGo. Built-in tools are on unless switched off. Changes apply at once (the searcher is
 // rebuilt in-process).
 
-// builtinTools are the server's own read-only MCP tools, in tools/list order.
-var builtinTools = []string{"view_attachment", "web_fetch", "web_search", "search_messages"}
+// builtinTools are the server's own MCP tools, in tools/list order (all read-only except
+// task_add / task_update, which only write pichat's own task records).
+var builtinTools = []string{"view_attachment", "web_fetch", "web_search", "search_messages", "task_list", "task_add", "task_update"}
 
 var builtinDesc = map[string]string{
 	"view_attachment": "查看群消息里的附件（图片、文本文件等）",
 	"web_fetch":       "读取公开网页的正文",
 	"web_search":      "用配置的搜索服务搜索网页",
 	"search_messages": "搜索群里以前的消息（只能搜 agent 所在的群）",
+	"task_list":       "查看群任务（非指挥者 @ 的受限运行只有这一个任务工具）",
+	"task_add":        "新建群任务",
+	"task_update":     "更新群任务的状态、备注和负责人",
 }
 
 func isBuiltin(name string) bool {

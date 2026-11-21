@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 import { api, ApiError, errorText } from './api'
 import type { Agent, AgentState, Group, GroupSummary, Me, Member, Message, RuntimeDirs, Working } from './types'
+import { normalizeTask, normalizeTasks, removeTask, upsertTask, type Task } from './tasks'
 
 export type Route =
   | { name: 'home' }
@@ -12,6 +13,7 @@ export type Route =
   | { name: 'agents'; focus?: string }
   | { name: 'admin' }
   | { name: 'me' }
+  | { name: 'tasks' }
 
 export interface ChatState {
   msgs: Message[]
@@ -41,6 +43,14 @@ export interface State {
   updateAvailable: boolean
   /** The server announced a restart (SSE 'restarting'); the page reloads once it is back. */
   restarting: boolean
+  /** groupId -> the group's tasks (all statuses), loaded when its chat opens. */
+  tasks: Record<string, Task[]>
+  /** Bumped on every 'task' SSE event, so the #/tasks board can apply or refetch. */
+  taskTick: number
+  /** Last task change from SSE, for the board. */
+  lastTaskEvent: { groupId: string; task: Task | null; taskId: string } | null
+  /** Open the task panel of this group once its chat is on screen (from the #/tasks board). */
+  taskPanel: string | null
 }
 
 const initial = (): State => ({
@@ -56,6 +66,10 @@ const initial = (): State => ({
   serverVersion: '',
   updateAvailable: false,
   restarting: false,
+  tasks: {},
+  taskTick: 0,
+  lastTaskEvent: null,
+  taskPanel: null,
 })
 
 let state: State = initial()
@@ -394,11 +408,77 @@ export function softSync() {
       .then(() => markRead(id))
       .catch(() => {})
   }
+  // Task events may have been missed while disconnected.
+  if (id && state.tasks[id]) loadTasks(id).catch(() => {})
+  setState((s) => ({ taskTick: s.taskTick + 1, lastTaskEvent: null }))
 }
 
 export function fullSync() {
-  setState({ chats: {}, info: {} })
+  setState((s) => ({ chats: {}, info: {}, tasks: {}, taskTick: s.taskTick + 1, lastTaskEvent: null }))
   refreshGroupsSoon()
   const r = state.route
-  if (r.name === 'chat') openChat(r.gid).catch(() => {})
+  if (r.name === 'chat') {
+    openChat(r.gid).catch(() => {})
+    loadTasks(r.gid).catch(() => {})
+  }
+}
+
+// ---- tasks ----
+
+/** GET /groups/{id}/tasks (all statuses) into the store. */
+export async function loadTasks(gid: string): Promise<Task[]> {
+  const r = await api<{ tasks?: unknown[] }>('GET', `/groups/${encodeURIComponent(gid)}/tasks`)
+  const list = normalizeTasks(r.tasks)
+  setState((s) => ({ tasks: { ...s.tasks, [gid]: list } }))
+  return list
+}
+
+/** Apply a task returned by the API or pushed over SSE. */
+export function applyTask(t: Task) {
+  if (!t.groupId) return
+  setState((s) => (s.tasks[t.groupId] ? { tasks: { ...s.tasks, [t.groupId]: upsertTask(s.tasks[t.groupId], t) } } : {}))
+}
+
+export function dropTask(gid: string, id: string) {
+  setState((s) => (s.tasks[gid] ? { tasks: { ...s.tasks, [gid]: removeTask(s.tasks[gid], id) } } : {}))
+}
+
+/** SSE 'task' {groupId, task}; a delete carries `deleted: true` (or only a taskId). */
+export function applyTaskEvent(e: { groupId?: string; task?: unknown; taskId?: string; id?: string; deleted?: boolean }) {
+  const t = normalizeTask(e.task)
+  const gid = e.groupId || t?.groupId || ''
+  const id = t?.id || e.taskId || e.id || ''
+  if (!gid || !id) return
+  const deleted = !!e.deleted || !t || (e.task as { deleted?: boolean } | undefined)?.deleted === true
+  if (deleted) dropTask(gid, id)
+  else applyTask({ ...t!, groupId: gid })
+  setState((s) => ({ taskTick: s.taskTick + 1, lastTaskEvent: { groupId: gid, task: deleted ? null : { ...t!, groupId: gid }, taskId: id } }))
+}
+
+// Mutations apply the result locally right away (the SSE echo is idempotent).
+const taskOf = (r: { task?: unknown }) => normalizeTask(r.task ?? r)
+
+export async function createTask(
+  gid: string,
+  body: { title: string; note?: string; assigneeId?: string | null; status?: string; sourceSeq?: number | null },
+): Promise<Task | null> {
+  const r = await api<{ task?: unknown }>('POST', `/groups/${encodeURIComponent(gid)}/tasks`, body)
+  const t = taskOf(r)
+  if (t) applyTaskEvent({ groupId: t.groupId || gid, task: t })
+  return t
+}
+
+export async function updateTask(
+  t: Pick<Task, 'id' | 'groupId'>,
+  patch: { title?: string; note?: string; assigneeId?: string | null; status?: string },
+): Promise<Task | null> {
+  const r = await api<{ task?: unknown }>('PATCH', `/tasks/${encodeURIComponent(t.id)}`, patch)
+  const next = taskOf(r)
+  if (next) applyTaskEvent({ groupId: next.groupId || t.groupId, task: next })
+  return next
+}
+
+export async function deleteTask(t: Pick<Task, 'id' | 'groupId'>) {
+  await api('DELETE', `/tasks/${encodeURIComponent(t.id)}`)
+  applyTaskEvent({ groupId: t.groupId, taskId: t.id, deleted: true })
 }

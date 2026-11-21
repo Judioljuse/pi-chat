@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { ArrowDown, Copy, CornerUpLeft, LoaderCircle, MessageSquareX } from 'lucide-react'
+import { ArrowDown, Copy, CornerUpLeft, ListPlus, LoaderCircle, MessageSquareX } from 'lucide-react'
 import { useReducedMotion } from 'motion/react'
 import { useStickToBottomContext, type StickToBottomContext } from 'use-stick-to-bottom'
 import { MessageMarker } from '@/components/agents/message'
@@ -26,6 +26,8 @@ export interface MessageListProps {
   keys: Map<number, string>
   workingAgents: WorkingAgent[]
   onReply: (m: Message) => void
+  /** 转为任务: open the new-task dialog prefilled from the message. */
+  onToTask?: (m: Message) => void
   onRecall: (m: Message) => void
   onRetry: (opKey: string) => void
   onDiscard: (opKey: string) => void
@@ -82,6 +84,7 @@ function Rows({
   keys,
   workingAgents,
   onReply,
+  onToTask,
   onRecall,
   onRetry,
   onDiscard,
@@ -233,6 +236,7 @@ function Rows({
             seqRefs={seqRefs}
             onActions={onActions}
             onReply={onReply}
+            onToTask={onToTask}
             onJump={jump}
             onRecall={onRecall}
             onRetry={onRetry}
@@ -289,6 +293,11 @@ function Rows({
               <SheetAction icon={<CornerUpLeft />} onClick={() => (onReply(sheet.m), setSheet(null))}>
                 回复
               </SheetAction>
+              {onToTask && sheet.m.kind === 'text' && (
+                <SheetAction icon={<ListPlus />} onClick={() => (onToTask(sheet.m), setSheet(null))}>
+                  转为任务
+                </SheetAction>
+              )}
               {sheet.canRecall && (
                 <SheetAction danger icon={<MessageSquareX />} onClick={() => (onRecall(sheet.m), setSheet(null))}>
                   撤回（2 分钟内）

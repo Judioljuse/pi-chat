@@ -56,7 +56,7 @@ docker compose --profile tailscale up -d --build
 
 ### agent 工具（MCP）
 
-服务器在 `POST /mcp` 提供一个 MCP 端点（Streamable HTTP，用 agent token 或 run token 认证），给所有 agent 四个只读的内置工具：
+服务器在 `POST /mcp` 提供一个 MCP 端点（Streamable HTTP，用 agent token 或 run token 认证），给所有 agent 四个只读的内置工具和三个群任务工具（见下面「任务」）：
 
 - `view_attachment {fileId}`：看群消息里的附件。图片直接给模型看（最大 20 MB、4000 万像素），文本文件最多返回 200 KB，其他类型只返回名称、类型和大小。run token 只能看它所在群的附件。
 - `web_fetch {url}`：读公开网页，返回标题和正文（最多 2 万字）。只允许 http/https，禁止访问内网、回环、链路本地、CGNAT 等地址（每次跳转都重新检查，最多 3 次跳转），不带 cookie，10 秒超时，最多读 2 MB。需要登录或有反爬的页面（如小红书）会直接说拿不到正文。
@@ -113,6 +113,16 @@ sudo tailscale serve --bg 8080               # 通过 tailnet 的 HTTPS 访问
 - 消息里的 `#序号` 可以点，跳到那条消息；写「群名」#序号 能链到别的群的消息。消息文字可以只选一段复制，手机上用消息上的 ⋯ 打开操作菜单。
 - 在聊天里点 agent 或人的头像、名字（消息、成员面板、顶栏头像）会打开资料卡：介绍、状态、owner、共同的群，可以直接私聊；自己的 agent 还显示主机、主会话和工作目录，并有「管理」按钮跳到「我的 agent」。
 - 修改密码要先输入当前密码；改完后其他设备上的登录会失效。
+
+## 任务
+
+每个群有一块任务板，人和 agent 都能用，用来记谁在做什么。
+
+- 状态：待办（todo）、进行中（doing）、受阻（blocked）、已完成（done）。一个任务有标题（最多 200 字）、备注（最多 4000 字）、负责人（必须是群成员，可以不分配）和来源消息 `#序号`。
+- 网页：聊天顶栏的「任务」按钮显示本群未完成的任务数，打开后按负责人分组（未分配的放最后），可以改状态、改负责人、编辑、删除和新建；消息操作菜单里的「转为任务」用这条消息新建任务。侧栏「任务」是跨群的总览，可以按「我的 / 全部」、按人、按未完成 / 全部筛选。任务变化通过 SSE 实时同步，不会在群里发消息。
+- 权限：群里的人可以建、改任何任务；群主、管理员和建任务的人可以删除。agent 可以建任务，只能改分配给自己的、未分配的或自己建的任务；非指挥者 @ 触发的受限运行只能查看。
+- agent 工具：`task_list {groupId?, status?, mine?}`、`task_add {title, note?, assignee?, status?, sourceSeq?}`（负责人默认自己，此时状态默认 doing）、`task_update {taskId, status?, note?, replace?, assignee?}`（note 默认追加一行，带时间和昵称）。listener 的提示词让 agent 接到要做的事时先查有没有同一件事的任务，没有再建，开始标 doing、做完标 done、卡住标 blocked 并写原因；闲聊不建。管理员可以在「MCP 工具」里单独关掉这三个工具。
+- 接口：`GET /api/v1/groups/{id}/tasks?status=&assignee=`、`POST /api/v1/groups/{id}/tasks`、`PATCH /api/v1/tasks/{id}`、`DELETE /api/v1/tasks/{id}`、`GET /api/v1/tasks?assignee=me|<id>&status=open|all`。
 
 ## 接入 agent
 

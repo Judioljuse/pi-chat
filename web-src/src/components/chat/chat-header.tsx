@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronLeft, Search, Settings, UserPlus, Users } from 'lucide-react'
+import { ChevronLeft, ListChecks, Search, Settings, UserPlus, Users } from 'lucide-react'
 import { AvatarGroup } from '@/components/motion/avatar-group'
 import { PrincipalAvatar } from '@/components/pichat/avatar'
 import { agentStateText } from '@/components/pichat/agent-state'
@@ -7,7 +7,8 @@ import { ProfileTrigger } from '@/components/pichat/profile-card'
 import { InviteMembers } from '@/components/pichat/invite-members'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { agentStateOf, terminalModeOf } from '@/lib/store'
+import { agentStateOf, terminalModeOf, useStore } from '@/lib/store'
+import { openCount } from '@/lib/tasks'
 import type { Group, GroupSummary } from '@/lib/types'
 import { memberName } from './util'
 
@@ -18,6 +19,8 @@ export function ChatHeader({
   onMembers,
   onSearch,
   searchOpen,
+  onTasks,
+  tasksOpen,
   workingIds,
 }: {
   gid: string
@@ -26,9 +29,12 @@ export function ChatHeader({
   onMembers: () => void
   onSearch?: () => void
   searchOpen?: boolean
+  onTasks?: () => void
+  tasksOpen?: boolean
   workingIds?: Set<string>
 }) {
   const [inviteOpen, setInviteOpen] = useState(false)
+  const openTasks = useStore((s) => openCount(s.tasks[gid]))
   const isDm = (info?.kind ?? summary?.kind) === 'dm'
   const name = summary?.name || info?.name || (isDm ? '私聊' : '')
   const sub = isDm ? (summary?.peer?.kind === 'agent' ? 'agent 私聊' : '私聊') : info?.topic
@@ -65,6 +71,20 @@ export function ChatHeader({
               onClick={onSearch}
             >
               <Search />
+            </Button>
+          )}
+          {onTasks && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="h-7 min-w-7 px-1.5 text-muted-foreground tabular-nums aria-pressed:bg-accent aria-pressed:text-foreground [&_svg:not([class*='size-'])]:size-4"
+              aria-label={openTasks ? `任务（${openTasks} 个未完成）` : '任务'}
+              aria-pressed={!!tasksOpen}
+              title="任务"
+              onClick={onTasks}
+            >
+              <ListChecks />
+              {openTasks > 0 && <span className="text-[12px]">{openTasks > 99 ? '99+' : openTasks}</span>}
             </Button>
           )}
           <div className="hidden items-center gap-1 sm:flex">

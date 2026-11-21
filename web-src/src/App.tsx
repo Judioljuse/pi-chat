@@ -19,6 +19,7 @@ import { Chat } from '@/pages/Chat'
 const Account = lazy(() => import('@/pages/Account').then((m) => ({ default: m.Account })))
 const Admin = lazy(() => import('@/pages/Admin').then((m) => ({ default: m.Admin })))
 const Agents = lazy(() => import('@/pages/Agents').then((m) => ({ default: m.Agents })))
+const Tasks = lazy(() => import('@/pages/Tasks').then((m) => ({ default: m.Tasks })))
 const GroupSettings = lazy(() => import('@/pages/GroupSettings').then((m) => ({ default: m.GroupSettings })))
 
 function Main() {
@@ -34,6 +35,8 @@ function Main() {
       return <Admin />
     case 'me':
       return <Account />
+    case 'tasks':
+      return <Tasks />
     default:
       return (
         <Empty

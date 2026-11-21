@@ -224,4 +224,23 @@ CREATE TABLE mcp_servers (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 ) STRICT;
+`,
+	// 9: group tasks (v0.3.2). Deleting a group deletes its tasks; principals are never hard-deleted.
+	`
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,                 -- t_...
+  group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,                 -- 1-200 字，单行
+  note TEXT NOT NULL DEFAULT '',       -- <= 4000 字
+  status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','doing','blocked','done')),
+  assignee_id TEXT REFERENCES principals(id),   -- NULL = 未分配
+  source_seq INTEGER,                  -- 来自本群哪条消息
+  created_by TEXT NOT NULL REFERENCES principals(id),
+  created_at INTEGER NOT NULL,
+  updated_by TEXT NOT NULL REFERENCES principals(id),
+  updated_at INTEGER NOT NULL,
+  done_at INTEGER
+) STRICT;
+CREATE INDEX ix_tasks_group ON tasks(group_id, status);
+CREATE INDEX ix_tasks_assignee ON tasks(assignee_id, status);
 `}

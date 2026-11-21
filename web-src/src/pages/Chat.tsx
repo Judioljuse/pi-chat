@@ -5,6 +5,8 @@ import { Composer, type ComposerHandle, type Outgoing } from '@/components/chat/
 import { MemberPanel } from '@/components/chat/member-panel'
 import { MessageList } from '@/components/chat/message-list'
 import { SearchPanel, SEARCH_PANEL_PX } from '@/components/chat/search-panel'
+import { TaskDialog, type TaskDraft } from '@/components/tasks/task-dialog'
+import { TaskPanel, TASK_PANEL_PX } from '@/components/tasks/task-panel'
 import { mentionTargets, memberName, reportWake, type Pending } from '@/components/chat/util'
 import { Empty } from '@/components/pichat/page'
 import type { WorkingAgent } from '@/components/pichat/working-indicator'
@@ -21,7 +23,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { api, ApiError, errorText } from '@/lib/api'
 import { randId } from '@/lib/format'
-import { agentStateOf, fail, getState, markRead, mergeMsgs, openChat, patchChat, patchMessage, useStore } from '@/lib/store'
+import { agentStateOf, fail, getState, loadTasks, markRead, mergeMsgs, openChat, patchChat, patchMessage, setState, useStore } from '@/lib/store'
+import { taskTitleFrom } from '@/lib/tasks'
 import type { Message, SendResult } from '@/lib/types'
 
 const EMPTY_WORKING: Record<string, number> = {}
@@ -60,21 +63,46 @@ export function Chat({ gid }: { gid: string }) {
   const wide = useWide()
   const [membersOpen, setMembersOpenRaw] = useState(false)
   const [searchOpen, setSearchOpenRaw] = useState(false)
-  // Desktop has one side slot: opening one panel closes the other.
+  const [tasksOpen, setTasksOpenRaw] = useState(false)
+  const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null)
+  // Desktop has one side slot: opening one panel closes the others.
   const setMembersOpen = useCallback((o: boolean | ((x: boolean) => boolean)) => {
     setMembersOpenRaw((prev) => {
       const next = typeof o === 'function' ? o(prev) : o
-      if (next) setSearchOpenRaw(false)
+      if (next) {
+        setSearchOpenRaw(false)
+        setTasksOpenRaw(false)
+      }
       return next
     })
   }, [])
   const setSearchOpen = useCallback((o: boolean | ((x: boolean) => boolean)) => {
     setSearchOpenRaw((prev) => {
       const next = typeof o === 'function' ? o(prev) : o
-      if (next) setMembersOpenRaw(false)
+      if (next) {
+        setMembersOpenRaw(false)
+        setTasksOpenRaw(false)
+      }
       return next
     })
   }, [])
+  const setTasksOpen = useCallback((o: boolean | ((x: boolean) => boolean)) => {
+    setTasksOpenRaw((prev) => {
+      const next = typeof o === 'function' ? o(prev) : o
+      if (next) {
+        setMembersOpenRaw(false)
+        setSearchOpenRaw(false)
+      }
+      return next
+    })
+  }, [])
+  // "#/g/<id>?tasks" (from the #/tasks board) opens the task panel.
+  const taskPanel = useStore((s) => s.taskPanel)
+  useEffect(() => {
+    if (taskPanel !== gid) return
+    setState({ taskPanel: null })
+    setTasksOpen(true)
+  }, [taskPanel, gid, setTasksOpen])
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const composer = useRef<ComposerHandle>(null)
@@ -83,6 +111,8 @@ export function Chat({ gid }: { gid: string }) {
     setErr('')
     setSearchOpenRaw(false)
     openChat(gid).catch((e) => setErr(errorText(e)))
+    // For the open-task count in the header; servers before v0.3.2 have no tasks endpoint.
+    loadTasks(gid).catch(() => {})
   }, [gid])
 
   const workingIds = useMemo(() => new Set(Object.keys(working)), [working])
@@ -163,6 +193,11 @@ export function Chat({ gid }: { gid: string }) {
   )
   const onDiscard = useCallback((opKey: string) => setPending((ps) => ps.filter((x) => x.opKey !== opKey)), [])
 
+  const onToTask = useCallback(
+    (m: Message) => setTaskDraft({ mode: 'new', gid, title: taskTitleFrom(m.text || ''), sourceSeq: m.seq > 0 ? m.seq : null }),
+    [gid],
+  )
+
   const onReply = useCallback((m: Message) => {
     setReply(m)
     composer.current?.focus()
@@ -212,7 +247,7 @@ export function Chat({ gid }: { gid: string }) {
 
   const ready = info && chat?.loaded
   return (
-    <div className="flex h-full min-h-0 flex-col" style={{ '--panel': !wide || !info ? '0px' : membersOpen ? '280px' : searchOpen ? `${SEARCH_PANEL_PX}px` : '0px' } as CSSProperties}>
+    <div className="flex h-full min-h-0 flex-col" style={{ '--panel': !wide || !info ? '0px' : membersOpen ? '280px' : searchOpen ? `${SEARCH_PANEL_PX}px` : tasksOpen ? `${TASK_PANEL_PX}px` : '0px' } as CSSProperties}>
       <ChatHeader
         gid={gid}
         info={info}
@@ -220,6 +255,8 @@ export function Chat({ gid }: { gid: string }) {
         onMembers={() => setMembersOpen((o) => !o)}
         onSearch={() => setSearchOpen((o) => !o)}
         searchOpen={searchOpen}
+        onTasks={() => setTasksOpen((o) => !o)}
+        tasksOpen={tasksOpen}
         workingIds={workingIds}
       />
       <div className="flex min-h-0 flex-1">
@@ -242,6 +279,7 @@ export function Chat({ gid }: { gid: string }) {
                 keys={keys}
                 workingAgents={workingAgents}
                 onReply={onReply}
+                onToTask={onToTask}
                 onRecall={setRecalling}
                 onRetry={onRetry}
                 onDiscard={onDiscard}
@@ -269,11 +307,23 @@ export function Chat({ gid }: { gid: string }) {
             </>
           )}
         </div>
+        {info && (
+          <TaskPanel
+            info={info}
+            meId={meId}
+            open={tasksOpen}
+            onOpenChange={setTasksOpen}
+            wide={wide}
+            onNew={() => setTaskDraft({ mode: 'new', gid })}
+          />
+        )}
         {info && <SearchPanel gid={gid} open={searchOpen} onOpenChange={setSearchOpen} wide={wide} />}
         {info && (
           <MemberPanel info={info} meId={meId} workingIds={workingIds} open={membersOpen} onOpenChange={setMembersOpen} wide={wide} />
         )}
       </div>
+
+      <TaskDialog draft={taskDraft} onClose={() => setTaskDraft(null)} members={info?.members} meId={meId} />
 
       <AlertDialog open={!!recalling} onOpenChange={(o) => !o && setRecalling(null)}>
         <AlertDialogContent size="sm">

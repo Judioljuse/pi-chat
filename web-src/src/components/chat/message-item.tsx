@@ -1,6 +1,6 @@
 import { memo, useEffect, useState, type ReactNode } from 'react'
 import { useReducedMotion } from 'motion/react'
-import { AlertCircle, Copy, CornerUpLeft, CheckCheck, Ellipsis, FileText, MessageSquareX, RotateCcw, Trash2 } from 'lucide-react'
+import { AlertCircle, Copy, CornerUpLeft, CheckCheck, Ellipsis, FileText, ListPlus, MessageSquareX, RotateCcw, Trash2 } from 'lucide-react'
 import {
   Message,
   MessageAvatar,
@@ -38,6 +38,8 @@ export interface MessageItemProps {
   /** Touch devices: the "⋯" button opens the action sheet (a long press stays native text selection). */
   onActions?: (m: Msg, canRecall: boolean) => void
   onReply: (m: Msg) => void
+  /** 转为任务 (desktop hover row). */
+  onToTask?: (m: Msg) => void
   onJump: (seq: number) => void
   onRecall: (m: Msg) => void
   onRetry: (opKey: string) => void
@@ -204,6 +206,7 @@ export const MessageItem = memo(function MessageItem({
   seqRefs,
   onActions,
   onReply,
+  onToTask,
   onJump,
   onRecall,
   onRetry,
@@ -264,6 +267,11 @@ export const MessageItem = memo(function MessageItem({
       <Action label="回复" onClick={() => onReply(m)}>
         <CornerUpLeft />
       </Action>
+      {onToTask && m.seq > 0 && (
+        <Action label="转为任务" onClick={() => onToTask(m)}>
+          <ListPlus />
+        </Action>
+      )}
       {canRecall && (
         <Action label="撤回（2 分钟内）" danger onClick={() => onRecall(m)}>
           <MessageSquareX />

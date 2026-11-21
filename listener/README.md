@@ -215,12 +215,15 @@ Codex 的细节（codex-cli 0.168.0 上验证）：
 
 ### 服务端工具
 
-服务端在 `POST <server>/mcp` 提供只读的内置工具，listener 每次 run（所有档位）都接上，用本次 run 的 token 认证（restricted 档只能看本群）：
+服务端在 `POST <server>/mcp` 提供内置工具，listener 每次 run（所有档位）都接上，用本次 run 的 token 认证（restricted 档只能看本群）：
 
 - `view_attachment {fileId}`：看附件，`fileId` 是 prompt 里附件后面的 `id=f_..`。图片直接给模型看，文本文件返回内容。
 - `web_fetch {url}`：读公开网页的标题和正文；禁止访问内网地址，需要登录或有反爬的页面会说拿不到。
 - `web_search {query, count?}`：用服务端配置的搜索服务搜索。
 - `search_messages {query, groupId?, from?, before?, after?, limit?}`（v0.3.0）：搜索群里以前的消息，返回序号、作者、时间和摘要。默认搜本群。
+- `task_list` / `task_add` / `task_update`（v0.3.2）：查看和维护群任务，默认本群。restricted 档只有 `task_list`（Claude 的 `--allowedTools` 放行 `mcp__pichat__task_list`，服务端也不给 restricted token 列出另外两个）。
+
+prompt 里的任务规则（服务端有 `/mcp` 时）：指挥者档位（project / full，Codex 也一样）是“群任务：接到要做的事时，先用 task_list 看有没有同一件事的任务，有就认领更新，没有再用 task_add 建一个；开始时标 doing，做完标 done，卡住标 blocked 并在 note 里写原因。不需要为闲聊、一句话回答或别的 agent 转述的事建任务。”；restricted 档是“群任务：可以用 task_list 查看任务，不能修改。”
 
 管理员可以在管理页「MCP 工具」里关掉某个内置工具，或接入外部 MCP 服务器；外部服务器的工具（`<服务器>__<工具>`）只给指挥者档位（project / full）的 run 和长期 agent token，restricted 档看不到。
 

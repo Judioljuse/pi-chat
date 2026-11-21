@@ -81,6 +81,11 @@ func (s *Server) routes() {
 	h("POST "+p+"/groups/{id}/read", anyone, s.markRead)
 	h("DELETE "+p+"/groups/{id}/messages/{seq}", anyone, s.recall)
 	h("GET "+p+"/groups/{id}/search", anyone, s.searchGroupMessages)
+	h("GET "+p+"/groups/{id}/tasks", anyone, s.listGroupTasks)
+	h("POST "+p+"/groups/{id}/tasks", anyone, s.postTask)
+	h("PATCH "+p+"/tasks/{id}", anyone, s.patchTask)
+	h("DELETE "+p+"/tasks/{id}", anyone, s.deleteTask)
+	h("GET "+p+"/tasks", anyone, s.listMyTasks)
 
 	h("GET "+p+"/inbox", human|agentTok|runCmd, s.inbox)
 	s.mux.HandleFunc("GET "+p+"/events", s.events)
@@ -153,7 +158,9 @@ func (s *Server) describe(c *ctx) (any, error) {
 			"POST /groups/{id}/read {seq}", "DELETE /groups/{id}/messages/{seq}",
 			"POST /chats {with}", "GET /contacts", "GET /principals/{id}", "POST /files (multipart file)", "GET /files/{id}",
 			"GET /groups/{id}/search?q=&from=&before=&after=&limit=",
-			"POST /mcp (MCP Streamable HTTP, Bearer agent/run token; tools: view_attachment, web_fetch, web_search, search_messages, plus <server>__<tool> from admin-configured MCP servers for agent tokens and commander runs)",
+			"GET /groups/{id}/tasks?status=&assignee=", "POST /groups/{id}/tasks {title,note?,assigneeId?,status?,sourceSeq?}",
+			"PATCH /tasks/{id} {title?,note?,assigneeId?,status?}", "DELETE /tasks/{id}", "GET /tasks?assignee=me|<id>&status=open|all",
+			"POST /mcp (MCP Streamable HTTP, Bearer agent/run token; tools: view_attachment, web_fetch, web_search, search_messages, task_list, task_add, task_update, plus <server>__<tool> from admin-configured MCP servers for agent tokens and commander runs)",
 			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?,listener?:{sha256,version,autoUpdate},dirs?:{main,default,binds:{groupId:dir},repo?:{root,branch,worktree,path},repos?:{dir:{root,branch,worktree,path}}}}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
 		},
 		"tools": s.toolsInfo(),
