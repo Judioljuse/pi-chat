@@ -47,7 +47,20 @@ export interface Group {
   working?: Working[]
   createdAt?: number
   /** Agent relay limits for this group (server default unless the owner/admins changed them). */
-  limits?: { hopLimit: number; agentWakesPerHour: number; default: boolean }
+  limits?: {
+    /** -1 = unlimited (hops are still counted for display). */
+    hopLimit: number
+    agentWakesPerHour: number
+    /** Per target agent: wakes caused by agent-authored messages in this group per hour (v0.3.3). */
+    agentWakesPerAgentHour?: number
+    unlimitedHops?: boolean
+    default: boolean
+  }
+  /** Collaboration rules shown to every agent (server default text when rulesDefault). */
+  rules?: string
+  rulesDefault?: boolean
+  /** Only for agent callers: who can command this agent in the group. */
+  commanders?: { id: string; nick: string; kind: 'human' | 'agent' }[]
 }
 
 export interface GroupSummary {

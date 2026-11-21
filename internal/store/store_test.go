@@ -152,3 +152,45 @@ func TestMigrateFromV8(t *testing.T) {
 		t.Fatalf("tasks: %d %v", n, err)
 	}
 }
+
+// TestMigrateFromV9 opens a v0.3.2 database (migrations 1-9) with group limits set: migration 10
+// adds the per-agent budget and rules columns (NULL) and keeps the existing values.
+func TestMigrateFromV9(t *testing.T) {
+	dir := t.TempDir()
+	old, err := sql.Open("sqlite", dsn(filepath.Join(dir, "pichat.db")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 9; i++ {
+		if _, err := old.Exec(migrations[i]); err != nil {
+			t.Fatalf("migration %d: %v", i+1, err)
+		}
+	}
+	for _, q := range []string{`PRAGMA user_version=9`,
+		`INSERT INTO principals(id,kind,name,display_name,created_at) VALUES('u_a','human','alice','Alice',1)`,
+		`INSERT INTO groups(id,kind,name,owner_id,last_seq,created_at,hop_limit,agent_wakes_per_hour) VALUES('g_1','group','g','u_a',1,1,12,90)`,
+		`INSERT INTO messages(group_id,seq,author_id,kind,body,created_at) VALUES('g_1',1,'u_a','text','hello',1)`,
+	} {
+		if _, err := old.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	old.Close()
+	db, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var v, hop, wakes int
+	var perAgent sql.NullInt64
+	var rules sql.NullString
+	var body string
+	db.R.QueryRow(`PRAGMA user_version`).Scan(&v)
+	if err := db.R.QueryRow(`SELECT hop_limit,agent_wakes_per_hour,agent_wakes_per_agent_hour,rules FROM groups WHERE id='g_1'`).Scan(&hop, &wakes, &perAgent, &rules); err != nil {
+		t.Fatal(err)
+	}
+	db.R.QueryRow(`SELECT body FROM messages WHERE seq=1`).Scan(&body)
+	if v != len(migrations) || hop != 12 || wakes != 90 || perAgent.Valid || rules.Valid || body != "hello" {
+		t.Fatalf("after migrate: v=%d hop=%d wakes=%d perAgent=%v rules=%v body=%q", v, hop, wakes, perAgent, rules, body)
+	}
+}

@@ -15,9 +15,11 @@ import { Field, Page, Section } from '@/components/pichat/page'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
+import { AGENT_WAKES_PER_AGENT_DEFAULT, hopInputValue, parseLimits, RULES_MAX, rulesLength, sameLimits, type LimitsBody } from '@/lib/group-limits'
 import { navigate } from '@/lib/router'
 import { fail, loadGroups, loadInfo, notify, useStore } from '@/lib/store'
 import type { Group, Member } from '@/lib/types'
@@ -113,7 +115,15 @@ export function GroupSettings({ gid }: { gid: string }) {
     <Page title={isDm ? '私聊信息' : '群设置'} back={`#/g/${gid}`}>
       {!isDm && <InfoForm key={info.name + '\n' + info.topic} info={info} manage={manage} />}
 
-      {!isDm && info.limits && <RelayLimits key={`${info.limits.hopLimit}/${info.limits.agentWakesPerHour}`} info={info} manage={manage} />}
+      {!isDm && info.limits && (
+        <RelayLimits
+          key={`${info.limits.hopLimit}/${info.limits.unlimitedHops}/${info.limits.agentWakesPerHour}/${info.limits.agentWakesPerAgentHour}`}
+          info={info}
+          manage={manage}
+        />
+      )}
+
+      {!isDm && info.rules !== undefined && <RulesForm key={`${info.rulesDefault}\n${info.rules}`} info={info} manage={manage} />}
 
       {!isDm && (
         <Section title="邀请成员">
@@ -261,11 +271,19 @@ function InfoForm({ info, manage }: { info: Group; manage: boolean }) {
 
 function RelayLimits({ info, manage }: { info: Group; manage: boolean }) {
   const lim = info.limits!
-  const [hop, setHop] = useState(String(lim.hopLimit))
-  const [wakes, setWakes] = useState(String(lim.agentWakesPerHour))
+  const cur: LimitsBody = {
+    hopLimit: lim.unlimitedHops || lim.hopLimit < 0 ? -1 : lim.hopLimit,
+    agentWakesPerHour: lim.agentWakesPerHour,
+    agentWakesPerAgentHour: lim.agentWakesPerAgentHour ?? AGENT_WAKES_PER_AGENT_DEFAULT,
+  }
+  const [unlimited, setUnlimited] = useState(cur.hopLimit === -1)
+  const [hop, setHop] = useState(hopInputValue(cur.hopLimit))
+  const [wakes, setWakes] = useState(String(cur.agentWakesPerHour))
+  const [perAgent, setPerAgent] = useState(String(cur.agentWakesPerAgentHour))
   const [busy, setBusy] = useState(false)
-  const dirty = Number(hop) !== lim.hopLimit || Number(wakes) !== lim.agentWakesPerHour
-  const save = async (body: { hopLimit: number; agentWakesPerHour: number }, msg: string) => {
+  const parsed = parseLimits({ hop, unlimited, wakes, perAgent })
+  const dirty = !('body' in parsed) || !sameLimits(parsed.body, cur)
+  const save = async (body: LimitsBody, msg: string) => {
     setBusy(true)
     try {
       await api('PATCH', `/groups/${info.id}`, body)
@@ -279,21 +297,27 @@ function RelayLimits({ info, manage }: { info: Group; manage: boolean }) {
   }
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    const h = Math.trunc(Number(hop)), w = Math.trunc(Number(wakes))
-    if (!(h >= 1 && h <= 50) || !(w >= 1 && w <= 1000)) return fail(new Error('接力上限 1～50 跳，每小时唤醒 1～1000 次'))
-    save({ hopLimit: h, agentWakesPerHour: w }, '已保存')
+    if ('error' in parsed) return fail(new Error(parsed.error))
+    save(parsed.body, '已保存')
   }
   return (
     <Section
       title="agent 接力"
-      description="agent 之间互相 @ 时，每传一次算一跳，到上限后需要人 @ 才能继续；每个 owner 的 agent 在本群每小时被其他 agent 唤醒的次数也有上限。调高可以让 agent 协作更久，也会用掉更多模型额度。"
+      description="agent 之间互相 @ 时，每传一次算一跳，到上限后需要人 @ 才能继续。每个 agent 每小时被其他 agent 唤醒的次数有上限，每个 owner 名下的 agent 合计也有上限。调高可以让 agent 协作更久，也会用掉更多模型额度。"
     >
       <form onSubmit={submit} className="flex flex-col gap-3">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="接力上限（跳）" htmlFor="g-hop" hint="1～50，默认 6">
-            <Input id="g-hop" type="number" inputMode="numeric" min={1} max={50} value={hop} disabled={!manage} onChange={(e) => setHop(e.target.value)} />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="接力上限（跳）" htmlFor="g-hop" hint={unlimited ? '不限制时仍会记录跳数' : '1～50，默认 6'}>
+            <Input id="g-hop" type="number" inputMode="numeric" min={1} max={50} value={hop} disabled={!manage || unlimited} onChange={(e) => setHop(e.target.value)} />
+            <label className="flex items-center gap-2 text-[12.5px] text-body">
+              <Switch size="sm" checked={unlimited} disabled={!manage} onCheckedChange={setUnlimited} aria-label="不限制接力跳数" />
+              不限制接力跳数
+            </label>
           </Field>
-          <Field label="每小时唤醒次数" htmlFor="g-wakes" hint="1～1000，默认 30">
+          <Field label="每个 agent 每小时被唤醒上限" htmlFor="g-per-agent" hint="1～1000，默认 60">
+            <Input id="g-per-agent" type="number" inputMode="numeric" min={1} max={1000} value={perAgent} disabled={!manage} onChange={(e) => setPerAgent(e.target.value)} />
+          </Field>
+          <Field label="每个 owner 每小时唤醒次数" htmlFor="g-wakes" hint="1～1000，默认 30">
             <Input id="g-wakes" type="number" inputMode="numeric" min={1} max={1000} value={wakes} disabled={!manage} onChange={(e) => setWakes(e.target.value)} />
           </Field>
         </div>
@@ -303,13 +327,68 @@ function RelayLimits({ info, manage }: { info: Group; manage: boolean }) {
               保存
             </Button>
             {!lim.default && (
-              <Button type="button" variant="outline" disabled={busy} onClick={() => save({ hopLimit: 0, agentWakesPerHour: 0 }, '已恢复默认')}>
+              <Button type="button" variant="outline" disabled={busy} onClick={() => save({ hopLimit: 0, agentWakesPerHour: 0, agentWakesPerAgentHour: 0 }, '已恢复默认')}>
                 恢复默认
               </Button>
             )}
           </div>
         ) : (
           <p className="text-[12.5px] text-muted-foreground">只有群主和管理员可以修改</p>
+        )}
+      </form>
+    </Section>
+  )
+}
+
+function RulesForm({ info, manage }: { info: Group; manage: boolean }) {
+  const saved = info.rules ?? ''
+  const [rules, setRules] = useState(saved)
+  const [busy, setBusy] = useState(false)
+  const len = rulesLength(rules)
+  const dirty = rules.trim() !== saved.trim()
+  const save = async (value: string, msg: string) => {
+    setBusy(true)
+    try {
+      // An empty string clears the custom rules; the server falls back to the default text.
+      await api('PATCH', `/groups/${info.id}`, { rules: value })
+      notify(msg)
+      await loadInfo(info.id).catch(() => {})
+    } catch (err) {
+      fail(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (len > RULES_MAX) return fail(new Error(`协作规则最多 ${RULES_MAX} 字`))
+    save(rules.trim(), '已保存')
+  }
+  return (
+    <Section title="协作规则" description="每次唤醒本群的 agent 时，这段规则都会放进它的提示里，要求它遵守。">
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <Field
+          label={info.rulesDefault ? '协作规则（默认）' : '协作规则'}
+          htmlFor="g-rules"
+          hint={
+            <span className={len > RULES_MAX ? 'text-destructive' : undefined}>
+              {manage ? `${len} / ${RULES_MAX} 字` : '只有群主和管理员可以修改'}
+            </span>
+          }
+        >
+          <Textarea id="g-rules" rows={8} value={rules} disabled={!manage} onChange={(e) => setRules(e.target.value)} />
+        </Field>
+        {manage && (
+          <div className="flex gap-2">
+            <Button type="submit" disabled={busy || !dirty || len > RULES_MAX}>
+              保存
+            </Button>
+            {!info.rulesDefault && (
+              <Button type="button" variant="outline" disabled={busy} onClick={() => save('', '已恢复默认规则')}>
+                恢复默认
+              </Button>
+            )}
+          </div>
         )}
       </form>
     </Section>

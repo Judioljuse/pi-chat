@@ -22,6 +22,8 @@ jobs:
         run: go test ./...
       - name: listener syntax
         run: node --check listener/pichat-listen.mjs
+      - name: listener tests
+        run: node --test listener/pichat-listen.test.mjs
 
   web:
     runs-on: ubuntu-latest

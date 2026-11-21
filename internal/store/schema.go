@@ -243,4 +243,11 @@ CREATE TABLE tasks (
 ) STRICT;
 CREATE INDEX ix_tasks_group ON tasks(group_id, status);
 CREATE INDEX ix_tasks_assignee ON tasks(assignee_id, status);
+`,
+	// 10: v0.3.3 relay settings. hop_limit may now be -1 (unlimited); agent_wakes_per_agent_hour caps
+	// wakes OF one agent triggered by agent messages in the group (NULL = default 60); rules is the
+	// group's collaboration rules shown to agents (NULL = built-in default text).
+	`
+ALTER TABLE groups ADD COLUMN agent_wakes_per_agent_hour INTEGER;
+ALTER TABLE groups ADD COLUMN rules TEXT;
 `}

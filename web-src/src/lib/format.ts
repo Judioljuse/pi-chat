@@ -74,6 +74,7 @@ export const PLATFORM_LIMITS: Record<string, string> = {
 export const NOT_WOKEN: Record<string, string> = {
   hop_limit: 'agent 接力已到上限',
   budget: 'owner 的 agent 唤醒预算已用完',
+  agent_budget: '这一小时被其他 agent 唤醒的次数到上限了',
   sender_limit: '你唤醒它太频繁了',
   offline: '不在线',
   disabled: '已停用',

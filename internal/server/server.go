@@ -129,6 +129,8 @@ type Server struct {
 	blobMu    sync.Mutex // serializes blob creation with the blob sweep
 	agentMu   sync.Mutex // serializes 'agent' runtime broadcasts
 	hopNotice map[string]time.Time
+	// agentNotice throttles the per-agent budget notice, keyed by group|agent.
+	agentNotice map[string]time.Time
 
 	// Restart replaces the default restart (SSE notice, shutdown, exec) in tests.
 	Restart      func(path, boot string)
@@ -168,6 +170,7 @@ func New(cfg Config, db *store.DB, assets Assets) *Server {
 		WakeDelay:    2 * time.Second,
 		WebhookRetry: 30 * time.Second,
 		hopNotice:    map[string]time.Time{},
+		agentNotice:  map[string]time.Time{},
 	}
 	s.wk = newWaker(s)
 	s.upd = cfg.Updater

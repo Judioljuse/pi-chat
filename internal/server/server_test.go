@@ -431,11 +431,11 @@ func TestHopLimit(t *testing.T) {
 	a2 := e.agent(alice, "A2", gid)
 	seq := alice.send(gid, map[string]any{"text": "@A1 start"})["message"].(map[string]any)["seq"]
 	agents := []*client{a1, a2}
+	nicks := []string{"@A2", "@A1"}
 	var r map[string]any
 	for i := 0; i < 6; i++ {
-		from, to := agents[i%2], agents[(i+1)%2]
-		_ = to
-		r = from.send(gid, map[string]any{"text": "pass", "replyTo": seq, "ignoreNew": true})
+		// Since v0.3.3 an agent's reply alone doesn't wake the other agent: @ it explicitly.
+		r = agents[i%2].send(gid, map[string]any{"text": nicks[i%2] + " pass", "replyTo": seq, "ignoreNew": true})
 		m := r["message"].(map[string]any)
 		if m["hop"].(float64) != float64(i+1) {
 			t.Fatalf("hop %d: %v", i, m["hop"])

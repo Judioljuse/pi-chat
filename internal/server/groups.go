@@ -112,10 +112,52 @@ func (s *Server) groupJSON(q querier, a *actor, gid string) (obj, error) {
 			name = m.DisplayName
 		}
 	}
-	hop, wakes := s.groupLimits(q, gid)
-	return obj{"id": g.ID, "kind": g.Kind, "name": name, "topic": g.Topic, "ownerId": g.OwnerID, "lastSeq": g.LastSeq,
+	lim := s.groupLimits(q, gid)
+	hop := lim.hop
+	if lim.unlimitedHops {
+		hop = unlimitedHopLimit
+	}
+	rules, rulesDefault := s.groupRules(q, gid)
+	out := obj{"id": g.ID, "kind": g.Kind, "name": name, "topic": g.Topic, "ownerId": g.OwnerID, "lastSeq": g.LastSeq,
 		"myRole": myRole, "members": ms, "working": s.work.list(gid), "createdAt": g.CreatedAt, "openTasks": s.openTaskCount(q, gid),
-		"limits": obj{"hopLimit": hop, "agentWakesPerHour": wakes, "default": hop == hopLimit && wakes == agentWakesPerHour}}, nil
+		"limits": obj{"hopLimit": hop, "unlimitedHops": lim.unlimitedHops, "agentWakesPerHour": lim.wakes,
+			"agentWakesPerAgentHour": lim.perAgent, "default": lim.isDefault()},
+		"rules": rules, "rulesDefault": rulesDefault}
+	if a.isAgent() {
+		out["commanders"] = s.commanders(q, a, gid, ms)
+	}
+	return out, nil
+}
+
+// defaultGroupRules is the collaboration rules text used when a group has none of its own (v0.3.3).
+const defaultGroupRules = `1. 对方的消息如果没有提问、没有新事实、也没有要你做的事，就不要回复（输出 [SILENT]）。
+2. 不要发“收到”“好的”“同意”这类确认；确认靠直接动手或交付结果体现。
+3. 有分歧时最多各说一轮，然后由派活的人（或派活的 agent）拍板，拍板后不再争论。
+4. 只有需要对方回答或动手时才 @ 他；交付结果时 @ 派活的人。回复 agent 的消息不会自动叫醒它。
+5. 回复尽量控制在 300 字以内，长的细节写进文件、提交说明或任务备注，群里只放结论和链接。`
+
+const maxRulesChars = 2000
+
+// groupRules returns gid's collaboration rules and whether they are the default text.
+func (s *Server) groupRules(q querier, gid string) (string, bool) {
+	var r sql.NullString
+	q.QueryRow(`SELECT rules FROM groups WHERE id=?`, gid).Scan(&r)
+	if !r.Valid || strings.TrimSpace(r.String) == "" {
+		return defaultGroupRules, true
+	}
+	return r.String, false
+}
+
+// commanders lists the group members whose messages command agent a in gid (its owner and the
+// humans/agents granted in this group or everywhere), so the agent knows who dispatches work.
+func (s *Server) commanders(q querier, a *actor, gid string, ms []memberJSON) []obj {
+	out := []obj{}
+	for _, m := range ms {
+		if m.ID != a.ID && s.canCommand(q, m.ID, a.ID, gid) {
+			out = append(out, obj{"id": m.ID, "nick": m.Nick, "kind": m.Kind})
+		}
+	}
+	return out
 }
 
 // addMember inserts pid into gid with a unique nick; existing members are returned unchanged.
@@ -420,8 +462,8 @@ func (s *Server) getGroup(c *ctx) (any, error) {
 func (s *Server) patchGroup(c *ctx) (any, error) {
 	gid := c.r.PathValue("id")
 	var req struct {
-		Name, Topic                 *string
-		HopLimit, AgentWakesPerHour *int
+		Name, Topic, Rules                                  *string
+		HopLimit, AgentWakesPerHour, AgentWakesPerAgentHour *int
 	}
 	if err := c.decode(&req); err != nil {
 		return nil, err
@@ -458,10 +500,37 @@ func (s *Server) patchGroup(c *ctx) (any, error) {
 		// 0 resets to the server default.
 		if req.HopLimit != nil {
 			v := *req.HopLimit
-			if v < 0 || v > maxHopLimit {
-				return badRequest("接力上限是 1 到 %d 跳（0 恢复默认 %d）", maxHopLimit, hopLimit)
+			if v < unlimitedHopLimit || v > maxHopLimit {
+				return badRequest("接力上限是 1 到 %d 跳（-1 不限制，0 恢复默认 %d）", maxHopLimit, hopLimit)
 			}
-			if _, err := tx.Exec(`UPDATE groups SET hop_limit=? WHERE id=?`, nullPositive(v), gid); err != nil {
+			var stored any = nullPositive(v)
+			if v == unlimitedHopLimit {
+				stored = unlimitedHopLimit
+			}
+			if _, err := tx.Exec(`UPDATE groups SET hop_limit=? WHERE id=?`, stored, gid); err != nil {
+				return err
+			}
+		}
+		if req.AgentWakesPerAgentHour != nil {
+			v := *req.AgentWakesPerAgentHour
+			if v < 0 || v > maxAgentWakesPerAgentHour {
+				return badRequest("每个 agent 每小时被唤醒上限是 1 到 %d（0 恢复默认 %d）", maxAgentWakesPerAgentHour, agentWakesPerAgentHour)
+			}
+			if _, err := tx.Exec(`UPDATE groups SET agent_wakes_per_agent_hour=? WHERE id=?`, nullPositive(v), gid); err != nil {
+				return err
+			}
+		}
+		// Empty (or the default text itself) resets to the default rules.
+		if req.Rules != nil {
+			r := strings.TrimSpace(strings.ReplaceAll(*req.Rules, "\r\n", "\n"))
+			if utf8.RuneCountInString(r) > maxRulesChars {
+				return badRequest("协作规则最多 %d 字", maxRulesChars)
+			}
+			var stored any
+			if r != "" && r != defaultGroupRules {
+				stored = r
+			}
+			if _, err := tx.Exec(`UPDATE groups SET rules=? WHERE id=?`, stored, gid); err != nil {
 				return err
 			}
 		}

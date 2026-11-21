@@ -164,7 +164,7 @@ func (s *Server) describe(c *ctx) (any, error) {
 			"POST /run-tokens {groupId,wakeId,session,host}", "PUT /me/runtime {state,session,host,name,notice?,listener?:{sha256,version,autoUpdate},dirs?:{main,default,binds:{groupId:dir},repo?:{root,branch,worktree,path},repos?:{dir:{root,branch,worktree,path}}}}", "DELETE /run-tokens", "POST /runs/start {groupId}", "POST /runs {groupId,ok,detail}", "DELETE /token",
 		},
 		"tools": s.toolsInfo(),
-		"limits": obj{"sendPerMinute": 30, "hopLimit": hopLimit, "agentWakesPerOwnerPerHour": agentWakesPerHour, "maxHopLimit": maxHopLimit, "maxAgentWakesPerHour": maxAgentWakesHour, "humanWakesPerAgentPerHour": 10,
+		"limits": obj{"sendPerMinute": 30, "hopLimit": hopLimit, "agentWakesPerOwnerPerHour": agentWakesPerHour, "agentWakesPerAgentPerHour": agentWakesPerAgentHour, "maxAgentWakesPerAgentPerHour": maxAgentWakesPerAgentHour, "maxHopLimit": maxHopLimit, "maxAgentWakesPerHour": maxAgentWakesHour, "humanWakesPerAgentPerHour": 10,
 			"groupMembers": maxMembers, "fileBytes": maxFile, "filesPerMessage": 8, "textChars": 10000, "runTokenMinutes": int(runTTL.Minutes())}}, nil
 }
 
@@ -235,6 +235,11 @@ func (s *Server) cleanup() {
 	for k, v := range s.hopNotice {
 		if time.Since(v) > 10*time.Minute {
 			delete(s.hopNotice, k)
+		}
+	}
+	for k, v := range s.agentNotice {
+		if time.Since(v) > agentNoticeEvery {
+			delete(s.agentNotice, k)
 		}
 	}
 	s.hopMu.Unlock()

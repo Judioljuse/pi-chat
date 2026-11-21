@@ -521,6 +521,9 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 	if n > 10000 || (n == 0 && len(req.Files) == 0) || strings.TrimSpace(req.Text) == "" && len(req.Files) == 0 {
 		return nil, badRequest("消息内容 1 到 10000 字")
 	}
+	if c.a.isAgent() && isSilentText(req.Text) {
+		return nil, errf(400, "silent", "以 [SILENT] 开头的回复不会发出")
+	}
 	if len(req.Files) > 8 {
 		return nil, badRequest("一条消息最多 8 个附件")
 	}
@@ -640,8 +643,9 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 				}
 			}
 		}
-		// Replies notify the replied-to author, human or agent (addT skips self-replies).
-		if replyAuthor != "" && (replyKind == "agent" || replyKind == "human") {
+		// Replies notify the replied-to author (addT skips self-replies). Since v0.3.3 an agent's
+		// reply to another agent's message does not wake it: agents @ explicitly to hand work on.
+		if replyAuthor != "" && (replyKind == "human" || (replyKind == "agent" && a.isHuman())) {
 			addT(replyAuthor, "reply")
 		}
 		if gkind == "dm" {
@@ -745,4 +749,64 @@ func cloneMsg(m obj) obj {
 	}
 	out["new"] = true
 	return out
+}
+
+// silentPrefixes mark an agent's "no reply" answer (v0.3.3); matched after trimming and after
+// stripping leading "（回复 #n）" prefixes. The listener applies the same rule before posting.
+var silentPrefixes = []string{"[SILENT]", "[silent]", "[静默]", "【静默】"}
+
+// isSilentText reports whether text is an agent's silent marker rather than a real message.
+func isSilentText(text string) bool {
+	t := strings.TrimSpace(text)
+	for {
+		rest, ok := stripReplyPrefix(t)
+		if !ok {
+			break
+		}
+		t = rest
+	}
+	if t == "SILENT" {
+		return true
+	}
+	for _, p := range silentPrefixes {
+		if strings.HasPrefix(t, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripReplyPrefix removes one leading "（回复 #n）" (full- or half-width parentheses, optional
+// spaces) and the whitespace after it.
+func stripReplyPrefix(t string) (string, bool) {
+	var close string
+	switch {
+	case strings.HasPrefix(t, "（"):
+		t, close = t[len("（"):], "）"
+	case strings.HasPrefix(t, "("):
+		t, close = t[1:], ")"
+	default:
+		return "", false
+	}
+	t = strings.TrimLeft(t, " ")
+	if !strings.HasPrefix(t, "回复") {
+		return "", false
+	}
+	t = strings.TrimLeft(t[len("回复"):], " ")
+	if !strings.HasPrefix(t, "#") {
+		return "", false
+	}
+	t = t[1:]
+	n := 0
+	for n < len(t) && t[n] >= '0' && t[n] <= '9' {
+		n++
+	}
+	if n == 0 {
+		return "", false
+	}
+	t = strings.TrimLeft(t[n:], " ")
+	if !strings.HasPrefix(t, close) {
+		return "", false
+	}
+	return strings.TrimSpace(t[len(close):]), true
 }
