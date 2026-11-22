@@ -130,7 +130,7 @@ func (s *Server) groupJSON(q querier, a *actor, gid string) (obj, error) {
 }
 
 // defaultGroupRules is the collaboration rules text used when a group has none of its own (v0.3.3).
-const defaultGroupRules = `1. 对方的消息如果没有提问、没有新事实、也没有要你做的事，就不要回复（输出 [SILENT]）。
+const defaultGroupRules = `1. 别的 agent 的消息如果没有提问、没有新事实、也没有要你做的事，就不要回复（输出 [SILENT]）；人直接 @ 你或私聊你时一定要回复。
 2. 不要发“收到”“好的”“同意”这类确认；确认靠直接动手或交付结果体现。
 3. 有分歧时最多各说一轮，然后由派活的人（或派活的 agent）拍板，拍板后不再争论。
 4. 只有需要对方回答或动手时才 @ 他；交付结果时 @ 派活的人。回复 agent 的消息不会自动叫醒它。

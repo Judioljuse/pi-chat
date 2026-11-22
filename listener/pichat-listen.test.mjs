@@ -80,3 +80,13 @@ test('failReason names model gateway failures', async () => {
   assert.match(r('超过 60 分钟'), /运行超时/);
   assert.equal(r('退出码 1 something else'), '运行出错');
 });
+
+test('a person @ing the agent must get a reply, an agent may get [SILENT]', () => {
+  const group = { id: 'g1', kind: 'dm', name: 'julio', members: [{ id: 'u1', nick: 'julio', kind: 'human' }, { id: 'a1', nick: 'cx', kind: 'agent' }] };
+  const base = { nonce: 'n1', group, msgs: [], skipped: 0, tier: 'full', cwd: '/x', bindDir: '', myNick: 'cx', ownerId: 'u1', me: 'a1', tools: false, agent: 'codex' };
+  const human = buildPrompt({ ...base, trigger: { seq: 8, kind: 'text', author: { id: 'u1', kind: 'human', name: 'julio' } } });
+  assert.match(human, /一定要回复/);
+  assert.doesNotMatch(human, /只输出 \[SILENT\]/);
+  const agent = buildPrompt({ ...base, trigger: { seq: 9, kind: 'text', author: { id: 'a2', kind: 'agent', name: 'cc' } } });
+  assert.match(agent, /只输出 \[SILENT\]/);
+});
