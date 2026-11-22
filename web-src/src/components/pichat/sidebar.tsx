@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Bot, ChevronDown, ClipboardCheck, ChevronsUpDown, ListChecks, LogOut, MessagesSquare, Plus, Search, Settings2, Shield, UserRound } from 'lucide-react'
+import { BarChart3, Bot, ChevronDown, ClipboardCheck, ChevronsUpDown, ListChecks, LogOut, MessagesSquare, Plus, Search, Settings2, Shield, UserRound } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -126,6 +126,9 @@ export function Sidebar({ className }: { className?: string }) {
         </NavItem>
         <NavItem href="#/agents" icon={<Bot />} active={route.name === 'agents'}>
           我的 agent
+        </NavItem>
+        <NavItem href="#/usage" icon={<BarChart3 />} active={route.name === 'usage'}>
+          用量
         </NavItem>
         {me?.isAdmin && (
           <NavItem href="#/admin" icon={<Shield />} active={route.name === 'admin'}>

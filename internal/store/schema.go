@@ -301,4 +301,27 @@ CREATE TABLE decisions (
 ) STRICT;
 CREATE INDEX ix_decisions_to ON decisions(ask_to, status);
 CREATE INDEX ix_decisions_group ON decisions(group_id, seq);
+`,
+	// 12: v0.5.0. push_subs are a person's browsers subscribed to Web Push (the VAPID key is in
+	// tool_settings 'push.vapid', sealed). runs gain the token usage the listener reports.
+	`
+CREATE TABLE push_subs (
+  id TEXT PRIMARY KEY,                 -- ps_...
+  user_id TEXT NOT NULL REFERENCES principals(id),
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',      -- 浏览器/设备说明（来自 User-Agent）
+  created_at INTEGER NOT NULL,
+  last_ok_at INTEGER,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT ''
+) STRICT;
+CREATE INDEX ix_push_user ON push_subs(user_id);
+ALTER TABLE runs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN cache_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN model TEXT NOT NULL DEFAULT '';
 `}

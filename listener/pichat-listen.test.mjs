@@ -68,3 +68,15 @@ test('buildPrompt: an agent trigger is not auto-notified except in a DM', () => 
   assert.match(mk({ id: 'a_sup', name: 'supervisor', kind: 'agent' }, 'dm'), /自动通知 supervisor/);
   assert.match(mk({ id: 'u_o', name: 'julio', kind: 'user' }, 'group'), /自动通知 julio/);
 });
+
+test('failReason names model gateway failures', async () => {
+  const { failReason } = await import('./pichat-listen.mjs');
+  const r = (e) => failReason(e);
+  assert.match(r('ERROR: unexpected status 503 Service Unavailable: Service temporarily unavailable, url: https://tokenhubapi.com.cn/v1/responses'), /模型服务暂时不可用/);
+  assert.match(r('Error running remote compact task: unexpected status 502 Bad Gateway'), /模型服务暂时不可用/);
+  assert.match(r('API Error: 429 rate_limit_error'), /额度不足或被限流/);
+  assert.match(r('401 invalid_api_key'), /鉴权失败/);
+  assert.match(r('ERROR: Reconnecting... 5/5 stream disconnected'), /连不上模型服务/);
+  assert.match(r('超过 60 分钟'), /运行超时/);
+  assert.equal(r('退出码 1 something else'), '运行出错');
+});

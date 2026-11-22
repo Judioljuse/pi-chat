@@ -15,6 +15,7 @@ export type Route =
   | { name: 'me' }
   | { name: 'tasks' }
   | { name: 'decisions' }
+  | { name: 'usage' }
 
 export interface ChatState {
   msgs: Message[]

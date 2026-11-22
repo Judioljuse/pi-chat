@@ -508,9 +508,15 @@ func (s *Server) deleteToken(c *ctx) (any, error) {
 
 func (s *Server) reportRun(c *ctx) (any, error) {
 	var req struct {
-		GroupID string
-		OK      bool
-		Detail  string
+		GroupID      string
+		OK           bool
+		Detail       string
+		InputTokens  int64   `json:"inputTokens"`
+		OutputTokens int64   `json:"outputTokens"`
+		CacheTokens  int64   `json:"cacheTokens"`
+		CostUSD      float64 `json:"costUsd"`
+		DurationMs   int64   `json:"durationMs"`
+		Model        string  `json:"model"`
 	}
 	if err := c.decode(&req); err != nil {
 		return nil, err
@@ -518,8 +524,12 @@ func (s *Server) reportRun(c *ctx) (any, error) {
 	if req.GroupID != "" && !c.a.canGroup(req.GroupID) {
 		return nil, errForbidden()
 	}
-	_, err := s.db.W.Exec(`INSERT INTO runs(agent_id,group_id,ok,detail,created_at) VALUES(?,?,?,?,?)`,
-		c.a.ID, nullStr(req.GroupID), b2i(req.OK), truncRunes(req.Detail, 1000), now())
+	// Usage is self-reported by the agent's listener: clamp it so a bad report can't wreck the totals.
+	clamp := func(v, hi int64) int64 { return min(max(v, 0), hi) }
+	cost := min(max(req.CostUSD, 0), 1000)
+	_, err := s.db.W.Exec(`INSERT INTO runs(agent_id,group_id,ok,detail,created_at,input_tokens,output_tokens,cache_tokens,cost_usd,duration_ms,model) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		c.a.ID, nullStr(req.GroupID), b2i(req.OK), truncRunes(req.Detail, 1000), now(),
+		clamp(req.InputTokens, 1e9), clamp(req.OutputTokens, 1e9), clamp(req.CacheTokens, 1e10), cost, clamp(req.DurationMs, 7*24*3600e3), truncRunes(cleanLabel(req.Model, 64), 64))
 	s.finishRun(req.GroupID, c.a.ID)
 	return obj{}, err
 }

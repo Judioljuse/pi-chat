@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"pichat/internal/store"
+	"pichat/internal/webpush"
 	"pichat/internal/tools"
 	"pichat/internal/update"
 )
@@ -128,6 +129,11 @@ type Server struct {
 	// zone alarm times like "10:30" are read in (TZ, default Asia/Shanghai).
 	AlarmMinDelay time.Duration
 	loc           *time.Location
+	// PushDelay: a Web Push goes out only if the person hasn't read the message by then (v0.5.0).
+	PushDelay  time.Duration
+	pushMu     sync.Mutex
+	vapidKey   *webpush.VAPID
+	pushClient *http.Client
 
 	hopMu     sync.Mutex
 	blobMu    sync.Mutex // serializes blob creation with the blob sweep
@@ -174,6 +180,8 @@ func New(cfg Config, db *store.DB, assets Assets) *Server {
 		WakeDelay:     2 * time.Second,
 		WebhookRetry:  30 * time.Second,
 		AlarmMinDelay: 10 * time.Minute,
+		PushDelay:     20 * time.Second,
+		pushClient:    webhookClient(nil),
 		loc:           alarmLocation(),
 		hopNotice:    map[string]time.Time{},
 		agentNotice:  map[string]time.Time{},

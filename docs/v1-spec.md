@@ -712,6 +712,11 @@ codex exec resume <thread_id> --json --skip-git-repo-check -c sandbox_mode="work
   - 单次运行上限：`PATCH /agents/{id} {runMaxMinutes}`（10–720，0 恢复 60），`GET /me` 和 agent JSON 返回 `runMaxMinutes`，变更时给 listener 发 SSE `config`；run token 的有效期至少是上限加 5 分钟。
   - 发送消息时，agent 如果还有别人发的未读消息（带 ignoreNew 发出的回复），已读位置不再跳到新消息：run 期间新到的 @ 和任务结果不会被吞掉。
 
+- v0.5.0：迁移 12：`push_subs(id,user_id,endpoint UNIQUE,p256dh,auth,label,created_at,last_ok_at,fail_count,last_error)`；`runs` 新增 `input_tokens, output_tokens, cache_tokens, cost_usd, duration_ms, model`。
+  - Web Push：`GET /push/key` 返回 VAPID 公钥（第一次调用时生成 P-256 密钥，私钥用 secret.key 加密存在 tool_settings `push.vapid`）；`GET/POST/DELETE /push/subscriptions`（POST 的 body 就是浏览器 `PushSubscription.toJSON()`，endpoint 必须是 https；同一 endpoint 只属于一个人；每人最多 10 台，满了替换最早的）；`POST /push/test`（每小时 10 次）。payload 按 RFC 8291 aes128gcm 加密，VAPID 按 RFC 8292（`internal/webpush`，只用标准库，测试对上 RFC 8291 的示例）。发送消息后，被 @、被回复、私聊的人（只限人类，不含作者）在 `PushDelay`（20 秒）后如果还没读到这条，就推送；404/410 删除订阅，连续失败 50 次也删除。`GET /sw.js` 提供 service worker（作用域 /，只处理 push、notificationclick、pushsubscriptionchange）。
+  - 用量：`POST /runs` 新增 `inputTokens, outputTokens, cacheTokens, costUsd, durationMs, model`（服务端截断到合理范围）；`GET /usage?days=1..30&scope=mine|all`（all 只限管理员）返回 total、agents、groups、byDay，日期按 `TZ`（默认 Asia/Shanghai）。listener：Claude 取 result 的 usage，费用用 `total_cost_usd` 相对同一会话上次的差值（它是整个会话的累计值）；Codex 累加 `turn.completed.usage`；pi 累加每条 assistant 消息的 usage。
+  - listener 的失败原因（群里的"我这次没能运行：…"和运行记录）区分：模型服务 5xx、429/额度、401/403 鉴权、网络、超时。
+
 ## 12. 版本与更新
 
 ### 12.1 版本号与发布

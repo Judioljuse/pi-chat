@@ -276,3 +276,9 @@ node ~/.pichat/pichat-listen.mjs api GET /groups
 - 运行中的 agent run 结束、run token 过期都不影响后台任务。
 
 单次运行上限：默认 60 分钟，owner 在「我的 agent」里可以改成 30 分钟到 12 小时；listener 从 `/me` 和 SSE `config` 事件读取，下一次 run 生效。被定时或后台任务结果叫醒时，prompt 开头写明原因。
+
+## 用量上报和失败原因（v0.5.0）
+
+每次 run 结束时 `POST /runs` 带上 token 和时长：Claude 取 result 里的 usage，费用是 `total_cost_usd` 相对同一会话上次 run 的差值（这个值是整个会话的累计，差值记在 state.json 的 `costTotals`）；Codex 累加 `turn.completed` 的 usage；pi 累加 assistant 消息的 usage。没有 usage 时只报时长。
+
+失败两次后群里的说明会写明原因：模型服务暂时不可用（网关 5xx）、额度不足或被限流（429）、鉴权失败（401/403）、连不上模型服务、运行超时，其余是"运行出错"。

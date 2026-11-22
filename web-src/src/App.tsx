@@ -10,6 +10,7 @@ import { api, setUnauthorizedHandler } from '@/lib/api'
 import { setFaviconBadge } from '@/lib/desktop-notify'
 import { closeEvents, connectEvents, eventsAlive } from '@/lib/events'
 import { parseRoute, syncRoute, takeAfterLogin } from '@/lib/router'
+import { resyncPush } from '@/lib/push'
 import { fail, getState, loadDecisions, loadGroups, loadServerVersion, loadUpdateFlag, notify, resetState, setState, softSync, useStore } from '@/lib/store'
 import type { Me } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -20,6 +21,7 @@ const Account = lazy(() => import('@/pages/Account').then((m) => ({ default: m.A
 const Admin = lazy(() => import('@/pages/Admin').then((m) => ({ default: m.Admin })))
 const Agents = lazy(() => import('@/pages/Agents').then((m) => ({ default: m.Agents })))
 const Tasks = lazy(() => import('@/pages/Tasks').then((m) => ({ default: m.Tasks })))
+const Usage = lazy(() => import('@/pages/Usage').then((m) => ({ default: m.Usage })))
 const Decisions = lazy(() => import('@/pages/Decisions').then((m) => ({ default: m.Decisions })))
 const GroupSettings = lazy(() => import('@/pages/GroupSettings').then((m) => ({ default: m.GroupSettings })))
 
@@ -40,6 +42,8 @@ function Main() {
       return <Tasks />
     case 'decisions':
       return <Decisions />
+    case 'usage':
+      return <Usage />
     default:
       return (
         <Empty
@@ -105,6 +109,7 @@ function login(me: Me) {
   setState({ me })
   loadGroups().catch(fail)
   loadDecisions()
+  resyncPush()
   connectEvents()
   loadServerVersion().catch(() => {})
   loadUpdateFlag()

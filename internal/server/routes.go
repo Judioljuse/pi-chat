@@ -96,6 +96,12 @@ func (s *Server) routes() {
 	h("GET "+p+"/decisions", human, s.getDecisions)
 	h("POST "+p+"/decisions/{id}/answer", human, s.answerDecision)
 	h("DELETE "+p+"/decisions/{id}", human|agentTok|runAny, s.cancelDecision)
+	h("GET "+p+"/push/key", human, s.pushKey)
+	h("GET "+p+"/push/subscriptions", human, s.getPushSubs)
+	h("POST "+p+"/push/subscriptions", human, s.postPushSub)
+	h("DELETE "+p+"/push/subscriptions", human, s.deletePushSub)
+	h("POST "+p+"/push/test", human, s.pushTest)
+	h("GET "+p+"/usage", human, s.getUsage)
 
 	h("GET "+p+"/inbox", human|agentTok|runCmd, s.inbox)
 	s.mux.HandleFunc("GET "+p+"/events", s.events)
@@ -132,6 +138,17 @@ func (s *Server) routes() {
 			files.ServeHTTP(w, r)
 		}))
 		s.mux.Handle("GET /static/", secHeaders(static))
+		// The service worker must be served from / to control the whole app (scope "/").
+		s.mux.Handle("GET /sw.js", secHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, err := fs.ReadFile(s.assets.Web, "sw.js")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Write(b)
+		})))
 		s.mux.Handle("GET /{$}", secHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			b, err := fs.ReadFile(s.assets.Web, "index.html")
 			if err != nil {

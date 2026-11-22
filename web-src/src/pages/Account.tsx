@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { LogOut } from 'lucide-react'
 import { Field, Page, Section } from '@/components/pichat/page'
 import { PrincipalAvatar } from '@/components/pichat/avatar'
@@ -9,6 +9,8 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { disableDesktopNotify, enableDesktopNotify, useNotifyStatus } from '@/lib/desktop-notify'
 import { api } from '@/lib/api'
+import { fmtTime } from '@/lib/format'
+import { disablePush, enablePush, usePushState } from '@/lib/push'
 import { fail, notify, setState, useStore } from '@/lib/store'
 import type { Me } from '@/lib/types'
 
@@ -73,6 +75,7 @@ export function Account() {
       </Section>
 
       <NotifySection />
+      <PushSection />
 
       <Section title="修改密码" description="修改后，你在其他设备上的登录会全部失效。">
         <form onSubmit={savePassword} className="flex flex-col gap-3">
@@ -130,6 +133,77 @@ function NotifySection() {
           aria-label="开启桌面通知"
         />
       </label>
+    </Section>
+  )
+}
+
+function PushSection() {
+  const [st, refresh] = usePushState()
+  const [busy, setBusy] = useState(false)
+  const [devices, setDevices] = useState<{ id: string; label: string; lastOkAt: number | null; lastError: string }[]>([])
+  const loadDevices = () =>
+    api<{ devices: typeof devices }>('GET', '/push/subscriptions').then((r) => setDevices(r.devices ?? []), () => {})
+  useEffect(() => {
+    loadDevices()
+  }, [st])
+  const run = async (f: () => Promise<unknown>, ok?: string) => {
+    setBusy(true)
+    try {
+      await f()
+      if (ok) notify(ok)
+    } catch (e) {
+      fail(e)
+    } finally {
+      setBusy(false)
+      refresh()
+      loadDevices()
+    }
+  }
+  const hint =
+    st === 'need-install'
+      ? 'iPhone / iPad 上要先把 pichat 添加到主屏幕：在 Safari 里点「分享」→「添加到主屏幕」，然后从主屏幕图标打开 pichat，再回到这里开启。需要 iOS 16.4 以上。'
+      : st === 'unsupported'
+        ? '这个浏览器不支持推送，或者不是通过 HTTPS 打开的。'
+        : st === 'denied'
+          ? '系统拒绝了 pichat 的通知。请在系统设置（iPhone：设置 → 通知 → pichat）或浏览器的网站设置里允许通知。'
+          : '有人 @ 你、回复你、私聊你，或有 agent 请你决定，而你 20 秒内没看时，推送到这台设备，锁屏也能收到。每台手机或电脑要分别开启。'
+  return (
+    <Section title="手机推送" description={hint}>
+      <div className="flex flex-col gap-3">
+        <label className="flex items-center justify-between gap-3 text-[13px] text-body">
+          这台设备接收推送
+          <Switch
+            checked={st === 'on'}
+            disabled={busy || st === null || st === 'unsupported' || st === 'need-install' || st === 'denied'}
+            onCheckedChange={(on) => run(on ? enablePush : disablePush, on ? '已开启推送' : '已关闭推送')}
+            aria-label="这台设备接收推送"
+          />
+        </label>
+        {devices.length > 0 && (
+          <div className="flex flex-col gap-1.5 text-[12.5px]">
+            <div className="text-muted-foreground">已开启推送的设备（{devices.length}）</div>
+            {devices.map((d) => (
+              <div key={d.id} className="flex items-center gap-2">
+                <span className="text-body">{d.label}</span>
+                <span className="text-muted-foreground">{d.lastError ? `上次失败：${d.lastError}` : d.lastOkAt ? `上次送达 ${fmtTime(d.lastOkAt)}` : '还没有推送过'}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="ml-auto h-7"
+                  onClick={() => run(() => api('DELETE', '/push/subscriptions', { id: d.id }), '已移除这台设备')}
+                >
+                  移除
+                </Button>
+              </div>
+            ))}
+            <div>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => api('POST', '/push/test'), '已发送测试推送')}>
+                发一条测试推送
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
     </Section>
   )
 }

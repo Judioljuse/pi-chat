@@ -1130,6 +1130,19 @@ class Listener {
       const secs = Math.round((Date.now() - t0) / 1000);
       let text = normalizeMentions((r.text || '').trim(), group.members || [], { ownerId });
       let detail = `${this.config.agent} ${tier} ${secs}s`;
+      const usage = r.usage && (r.usage.inputTokens || r.usage.outputTokens) ? { ...r.usage, durationMs: Date.now() - t0, model: this.config.model || '' } : { durationMs: Date.now() - t0 };
+      // Claude's total_cost_usd counts the whole resumed session, not this run: report the change
+      // since the last run of the same session, and nothing when there is no earlier total.
+      if (this.config.agent === 'claude' && usage.costUsd) {
+        const key = ranSession || main?.id || '';
+        const costs = (this.state.costTotals ||= {});
+        const prev = costs[key];
+        costs[key] = usage.costUsd;
+        usage.costUsd = typeof prev === 'number' && usage.costUsd >= prev ? Math.round((usage.costUsd - prev) * 1e6) / 1e6 : 0;
+        const keys = Object.keys(costs);
+        if (keys.length > 50) delete costs[keys[0]];
+        this.saveState();
+      }
       // Filtered here so it does not depend on the model obeying the rules: silent markers in any
       // common spelling, and pure acknowledgements ("收到" "好的👍"), are not posted.
       if (r.ok && text && isSilentReply(text)) {
@@ -1162,7 +1175,8 @@ class Listener {
         this.saveState();
         this.log(`run 完成：群 ${gid} ${detail}`);
       } else {
-        detail += ` 失败：${r.error}`;
+        const why = failReason(`${r.error}\n${r.stderr || ''}`);
+        detail += ` 失败：${why !== '运行出错' ? why + '；' : ''}${r.error}`;
         this.log(`run 失败：群 ${gid} ${r.error}`);
         const key = `${gid}:${lastSeq}`;
         if (!this.state.retries[key]) {
@@ -1172,14 +1186,14 @@ class Listener {
           setTimeout(() => this.enqueue(gid, { retry: { wake, lastSeq, fromSeq } }), RETRY_MS);
         } else {
           // Second failure for the same messages: say so, so whoever asked isn't left waiting.
-          const text = `我这次没能运行：${failReason(r.error)}。详情在 owner 的「我的 agent」页面，修好后再 @ 我。`;
+          const text = `我这次没能运行：${why}。详情在 owner 的「我的 agent」页面，修好后再 @ 我。`;
           try {
             await this.call('POST', `/groups/${gid}/messages`, { text, replyTo: trigger.seq, opKey: `${wake?.wakeId || 'job'}:${lastSeq}:fail`, ignoreNew: true }, await freshToken(tier));
             detail += '（已在群里说明）';
           } catch (e) { this.log('发送失败说明出错：', e.message); }
         }
       }
-      await this.call('POST', '/runs', { groupId: gid, ok: r.ok, detail: detail.slice(0, 1000) }).catch((e) => this.log('上报 run 失败：', e.message));
+      await this.call('POST', '/runs', { groupId: gid, ok: r.ok, detail: detail.slice(0, 1000), ...usage }).catch((e) => this.log('上报 run 失败：', e.message));
     } finally { await revoke(); }
   }
 
@@ -1427,7 +1441,7 @@ export default function (pi) {
         // Background processes the agent started may still hold the pipes: keep draining
         // (so they never block on a full pipe) but discard the output.
         for (const st of [child.stdout, child.stderr]) { st.removeAllListeners('data'); st.on('data', () => {}); }
-        resolve({ ok, text: res.text, threadId: res.threadId, leaf: res.leaf, leaves: res.leaves, subtype: res.subtype, error: ok ? '' : `${error} ${stderr.trim().split('\n').slice(-3).join(' | ')}`.trim().slice(0, 600), stderr: stderr + '\n' + (res.errors || '') });
+        resolve({ ok, usage: res.usage, text: res.text, threadId: res.threadId, leaf: res.leaf, leaves: res.leaves, subtype: res.subtype, error: ok ? '' : `${error} ${stderr.trim().split('\n').slice(-3).join(' | ')}`.trim().slice(0, 600), stderr: stderr + '\n' + (res.errors || '') });
       };
       child.on('error', (e) => done(null, null, e));
       // 'close' waits for every pipe holder (e.g. a dev server the agent started); 'exit' plus a
@@ -1455,7 +1469,10 @@ function failReason(err) {
   if (/unrecognized_model|model.*not (found|exist|support)/i.test(e)) return '模型名不被网关识别';
   if (/超过 \d+ 分钟|没有输出/.test(e)) return '运行超时（长任务请用 job 命令放到后台跑，或让 owner 在「我的 agent」里调高单次运行上限）';
   if (/content safety|安全/i.test(e)) return '请求被模型网关的内容安全策略拒绝';
-  if (/rate.?limit|429|quota|额度/i.test(e)) return '模型额度或限流';
+  if (/rate.?limit|\b429\b|quota|额度|insufficient.?(balance|credit)/i.test(e)) return '模型服务额度不足或被限流（429），请 owner 检查模型网关的额度';
+  if (/\b(502|503|504|529)\b|Service (Temporarily )?Unavailable|Bad Gateway|Gateway Time-?out|overloaded/i.test(e)) return '模型服务暂时不可用（网关返回 5xx），稍后会自动重试';
+  if (/\b(401|403)\b|invalid.?api.?key|unauthorized|authentication/i.test(e)) return '模型服务鉴权失败（key 无效或没有权限）';
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Reconnecting|stream disconnected|network|fetch failed/i.test(e)) return '连不上模型服务（网络问题）';
   return '运行出错';
 }
 
@@ -1563,6 +1580,16 @@ function outputParser(agent) {
   let last = null, leaf = '';
   const leaves = [];
   const parse = (l) => { try { return JSON.parse(l); } catch { return null; } };
+  // Token usage of the run (v0.5.0), summed over turns; reported with the run, never required.
+  const usage = { inputTokens: 0, outputTokens: 0, cacheTokens: 0, costUsd: 0 };
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const addUsage = (u) => {
+    if (!u || typeof u !== 'object') return;
+    usage.inputTokens += num(u.input_tokens ?? u.input);
+    usage.outputTokens += num(u.output_tokens ?? u.output);
+    usage.cacheTokens += num(u.cached_input_tokens) + num(u.cache_read_input_tokens ?? u.cacheRead) + num(u.cache_creation_input_tokens ?? u.cacheWrite);
+    usage.costUsd += num(u.cost?.total);
+  };
   if (agent === 'codex') {
     // codex exec --json: thread.started {thread_id} first, item.completed items (the answer is the
     // last agent_message), turn.completed / turn.failed. Items of type "error" are mostly config
@@ -1577,14 +1604,15 @@ function outputParser(agent) {
         if (o.type === 'thread.started' && typeof o.thread_id === 'string') threadId = o.thread_id;
         else if (o.type === 'item.completed' && o.item?.type === 'agent_message' && typeof o.item.text === 'string') { text = o.item.text; hasMsg = true; }
         else if (o.type === 'item.completed' && o.item?.type === 'error') warns.push(String(o.item.message || ''));
+        else if (o.type === 'turn.completed' && o.usage) addUsage(o.usage);
         else if (o.type === 'turn.failed') failed = String(o.error?.message || 'turn.failed');
         else if (o.type === 'error') failed ||= String(o.message || 'error');
       },
       result() {
         const errors = [failed, ...warns].filter(Boolean).join('\n');
-        if (failed) return { ok: false, threadId, text, error: `codex 失败：${failed}`, errors };
-        if (!hasMsg) return { ok: false, threadId, error: '没有拿到 agent_message', errors };
-        return { ok: true, threadId, text, errors };
+        if (failed) return { ok: false, threadId, text, error: `codex 失败：${failed}`, errors, usage };
+        if (!hasMsg) return { ok: false, threadId, error: '没有拿到 agent_message', errors, usage };
+        return { ok: true, threadId, text, errors, usage };
       },
     };
   }
@@ -1595,16 +1623,18 @@ function outputParser(agent) {
     line(l) { const o = parse(l); if (o?.type === 'result') last = o; else if (o?.type === 'assistant' && typeof o.uuid === 'string') { leaf = o.uuid; leaves.push(o.uuid); } },
     result() {
       if (!last) return { ok: false, error: '没有拿到 result', leaf, leaves };
-      return { ok: !last.is_error, leaf, leaves, subtype: last.subtype, text: typeof last.result === 'string' ? last.result : '', error: last.is_error ? `result ${last.subtype} ${(last.errors || []).join('; ')}` : '', errors: (last.errors || []).join('\n') };
+      addUsage(last.usage);
+      usage.costUsd = num(last.total_cost_usd) || usage.costUsd;
+      return { usage, ok: !last.is_error, leaf, leaves, subtype: last.subtype, text: typeof last.result === 'string' ? last.result : '', error: last.is_error ? `result ${last.subtype} ${(last.errors || []).join('; ')}` : '', errors: (last.errors || []).join('\n') };
     },
   };
   return {
-    line(l) { const o = parse(l); if (o?.type === 'message_end' && o.message?.role === 'assistant') last = o.message; },
+    line(l) { const o = parse(l); if (o?.type === 'message_end' && o.message?.role === 'assistant') { last = o.message; addUsage(o.message.usage); } },
     result() {
-      if (!last) return { ok: false, error: '没有拿到 assistant 消息' };
+      if (!last) return { ok: false, error: '没有拿到 assistant 消息', usage };
       const text = (last.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
       const bad = ['error', 'aborted'].includes(last.stopReason);
-      return { ok: !bad, text, error: bad ? `stopReason ${last.stopReason} ${last.errorMessage || ''}` : '' };
+      return { ok: !bad, text, usage, error: bad ? `stopReason ${last.stopReason} ${last.errorMessage || ''}` : '' };
     },
   };
 }
@@ -2367,7 +2397,7 @@ function isMain() {
   try { return import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href; } catch { return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href; }
 }
 
-export { isSilentReply, isAckOnly, stripReplyPrefix, askerIds, rulesBlock, dispatcherLine, buildPrompt, normalizeMentions };
+export { failReason, isSilentReply, isAckOnly, stripReplyPrefix, askerIds, rulesBlock, dispatcherLine, buildPrompt, normalizeMentions };
 
 if (isMain()) {
   const argv = parseArgs(process.argv.slice(2));

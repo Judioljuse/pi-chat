@@ -785,6 +785,7 @@ func (s *Server) postMessage(a *actor, r *http.Request, gid string, req sendReq)
 		s.rl.reset(budgetKey(a.ID, gid))
 	}
 	woken, notWoken := s.wk.dispatch(a, gid, seq, hop, targets, ms)
+	s.schedulePush(a, gid, seq, req.Text, targets, ms)
 	res := obj{"message": msg, "mentioned": mentioned, "woken": woken, "notWoken": notWoken}
 	if hint != "" {
 		res["mentionHint"] = hint
