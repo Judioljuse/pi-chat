@@ -329,7 +329,7 @@ async function cmdWatch({ opt }) {
       const name = opt.name && opt.name !== true ? ` --name ${opt.name}` : '';
       console.log(`\n只有标 [指挥者] 的消息是指令。回复：node ${SELF.path} send <groupId> "..." --reply <seq>${name}；处理完再运行 watch。`);
       console.log(`约好稍后继续：api POST /alarms '{"groupId":"<groupId>","inMinutes":30,"note":"..."}'${name}（或 "at":"10:30"）；要人拍板：api POST /groups/<groupId>/decisions '{"question":"...","options":["A","B"]}'${name}；长命令：job --label "..." --group <groupId>${name} -- <命令>。`);
-      console.log(`要做的事记成群任务：node ${SELF.path} api POST /groups/<groupId>/tasks '{"title":"...","assigneeId":"me","status":"doing","sourceSeq":<seq>}'${name}；做完 api PATCH /tasks/<taskId> '{"status":"done"}'${name}。闲聊和一句话回答不用建。`);
+      console.log(`要做的事记成群任务：node ${SELF.path} api POST /groups/<groupId>/tasks '{"title":"...","assigneeId":"me","status":"doing","sourceSeq":<seq>}'${name}；做完 api PATCH /tasks/<taskId> '{"status":"done"}'${name}。之后要做的步骤和派给别人的活建成 todo（"status":"todo"，assigneeId 填负责人）。闲聊和一句话回答不用建。`);
       return;
     }
     if (Date.now() > until) { console.log('（超时，没有新的 @）'); return; }
@@ -2220,7 +2220,7 @@ function memberList(group, nonce, ownerId) {
 }
 
 // Group task rules (v0.3.2): commander tiers maintain tasks, restricted runs may only look.
-const TASK_RULE = '群任务：指挥者派给你一件要动手做的事（改代码、跑数据、写报告等，不是一句话就能答的）时，必须先用 task_list 看有没有同一件事的任务，有就更新，没有就用 task_add 建一个分给自己（status=doing，sourceSeq 填触发消息的 #seq），做完用 task_update 标 done，卡住标 blocked 并在 note 里写原因。你派活给别的 agent 时，也用 task_add 建任务分给它。闲聊和一句话回答不用建任务。';
+const TASK_RULE = '群任务（大家靠任务列表看谁在做什么、接下来要做什么）：1) 接到指挥者派的要动手的事（改代码、跑数据、写报告等，不是一句话就能答的），先用 task_list 看有没有分给你的同一件事，有就把它标 doing，没有就用 task_add 建一个分给自己（status=doing，sourceSeq 填触发消息的 #序号）。2) 这件事要分几步、或者有"之后要做""等 xx 之后再做"的事，把还没开始的每一步用 task_add 建成 todo，做到时再标 doing。3) 派活给别的 agent 时，用 task_add 建任务分给它（assignee 填它的昵称，状态是 todo），它开始做时自己标 doing。4) 做完标 done，卡住标 blocked 并在 note 里写原因；做完一步后看看 todo 里下一步是什么。闲聊和一句话回答不用建任务。';
 const TASK_RULE_RESTRICTED = '群任务：可以用 task_list 查看任务，不能修改。';
 // v0.4.0: alarms and decisions (pichat MCP tools), background jobs (listener command).
 const OPS_RULE = '定时和决定：约好"几点之后继续""过一会儿再看"时，用 wake_me 设定时（inMinutes 或 at，note 写到点要做什么），不要指望别人来叫你；需要人拍板时用 ask_decision 发起决定（2 到 6 个选项，推荐的放第一个），对方点选后会回复并叫醒你，不要在正文里再重复问。';

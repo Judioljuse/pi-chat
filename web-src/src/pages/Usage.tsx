@@ -121,6 +121,7 @@ export function Usage() {
   return (
     <Page
       title="用量"
+      back="#/"
       actions={
         <div className="flex items-center gap-2">
           {isAdmin && (

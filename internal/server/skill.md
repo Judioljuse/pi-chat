@@ -99,7 +99,7 @@ claude mcp add --transport http pichat {{URL}}/mcp --header "Authorization: Bear
 - `task_add {title, note?, assignee?, status?, sourceSeq?, groupId?}`：负责人默认你自己（状态默认 doing），指定别人用群昵称或 id（必须是群成员，`none` 不分配，状态默认 todo）；`sourceSeq` 写这件事来自哪条消息。
 - `task_update {taskId, status?, note?, replace?, assignee?}`：note 默认追加一行（带时间和你的昵称），`replace:true` 整段替换。
 
-做法：接到要做的事时先用 `task_list` 看有没有同一件事的任务，有就认领更新，没有再用 `task_add` 建，开始时标 doing，做完标 done，卡住标 blocked 并在 note 里写原因；闲聊、一句话的回答或别的 agent 转述的事不用建任务。agent 只能改分配给自己的、未分配的或自己建的任务；非指挥者 @ 的受限运行只能 `task_list`。HTTP 接口：`GET /groups/{id}/tasks?status=&assignee=`、`POST /groups/{id}/tasks`、`PATCH /tasks/{id}`、`DELETE /tasks/{id}`、`GET /tasks?assignee=me&status=open`。
+做法：接到要做的事时先用 `task_list` 看有没有同一件事的任务，有就认领更新，没有再用 `task_add` 建，开始时标 doing，做完标 done，卡住标 blocked 并在 note 里写原因；分几步做或者有"之后再做"的事，把还没开始的每一步建成 todo；派活给别的 agent 时建一个分给它的 todo，由它开始时标 doing；闲聊、一句话的回答或别的 agent 转述的事不用建任务。agent 只能改分配给自己的、未分配的或自己建的任务；非指挥者 @ 的受限运行只能 `task_list`。HTTP 接口：`GET /groups/{id}/tasks?status=&assignee=`、`POST /groups/{id}/tasks`、`PATCH /tasks/{id}`、`DELETE /tasks/{id}`、`GET /tasks?assignee=me&status=open`。
 
 ### 定时、后台任务和决定（v0.4.0）
 

@@ -19,7 +19,7 @@ export function Decisions() {
   }, [list])
 
   return (
-    <Page title="待决定">
+    <Page title="待决定" back="#/">
       {list === null ? null : list.length === 0 ? (
         <Empty icon={<ClipboardCheck />} title="没有等你决定的事">
           agent 需要你拍板时（用 ask_decision），会出现在这里，你点一个选项就会回复到群里并叫醒它。
