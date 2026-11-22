@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 import { api, ApiError, errorText } from './api'
-import type { Agent, AgentState, Group, GroupSummary, Me, Member, Message, RuntimeDirs, Working } from './types'
+import type { Agent, AgentState, Group, GroupSummary, Me, Member, Message, RuntimeDirs, Working, Decision } from './types'
 import { normalizeTask, normalizeTasks, removeTask, upsertTask, type Task } from './tasks'
 
 export type Route =
@@ -14,6 +14,7 @@ export type Route =
   | { name: 'admin' }
   | { name: 'me' }
   | { name: 'tasks' }
+  | { name: 'decisions' }
 
 export interface ChatState {
   msgs: Message[]
@@ -51,6 +52,8 @@ export interface State {
   lastTaskEvent: { groupId: string; task: Task | null; taskId: string } | null
   /** Open the task panel of this group once its chat is on screen (from the #/tasks board). */
   taskPanel: string | null
+  /** Open decisions asked of me (v0.4.0), newest first; null until loaded. */
+  decisions: Decision[] | null
 }
 
 const initial = (): State => ({
@@ -70,6 +73,7 @@ const initial = (): State => ({
   taskTick: 0,
   lastTaskEvent: null,
   taskPanel: null,
+  decisions: null,
 })
 
 let state: State = initial()
@@ -408,8 +412,9 @@ export function softSync() {
       .then(() => markRead(id))
       .catch(() => {})
   }
-  // Task events may have been missed while disconnected.
+  // Task and decision events may have been missed while disconnected.
   if (id && state.tasks[id]) loadTasks(id).catch(() => {})
+  loadDecisions()
   setState((s) => ({ taskTick: s.taskTick + 1, lastTaskEvent: null }))
 }
 
@@ -481,4 +486,33 @@ export async function updateTask(
 export async function deleteTask(t: Pick<Task, 'id' | 'groupId'>) {
   await api('DELETE', `/tasks/${encodeURIComponent(t.id)}`)
   applyTaskEvent({ groupId: t.groupId, taskId: t.id, deleted: true })
+}
+
+// ---- decisions (v0.4.0) ----
+
+export async function loadDecisions() {
+  try {
+    const r = await api<{ decisions?: Decision[] }>('GET', '/decisions')
+    setState({ decisions: r.decisions ?? [] })
+  } catch {
+    // older server: no decisions
+  }
+}
+
+/** SSE 'decision' {groupId, decision}: update the message that asks it and my open list. */
+export function applyDecisionEvent(e: { groupId?: string; decision?: Decision }) {
+  const d = e.decision
+  if (!d?.id || !e.groupId) return
+  patchMessage(e.groupId, d.seq, { decision: d })
+  const meId = getState().me?.id
+  setState((s) => {
+    const rest = (s.decisions ?? []).filter((x) => x.id !== d.id)
+    return { decisions: d.status === 'open' && d.askTo.id === meId ? [d, ...rest] : rest }
+  })
+}
+
+export async function answerDecision(d: Decision, option: number | null, text = '') {
+  const r = await api<{ decision: Decision }>('POST', `/decisions/${d.id}/answer`, option === null ? { text } : { option, text })
+  applyDecisionEvent({ groupId: d.groupId, decision: r.decision })
+  return r.decision
 }

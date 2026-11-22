@@ -40,6 +40,8 @@ export function parseRoute(hash = location.hash): Route {
       return { name: 'me' }
     case 'tasks':
       return { name: 'tasks' }
+    case 'decisions':
+      return { name: 'decisions' }
     default:
       return { name: 'home' }
   }

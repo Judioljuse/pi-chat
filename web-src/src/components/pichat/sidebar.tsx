@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Bot, ChevronDown, ChevronsUpDown, ListChecks, LogOut, MessagesSquare, Plus, Search, Settings2, Shield, UserRound } from 'lucide-react'
+import { Bot, ChevronDown, ClipboardCheck, ChevronsUpDown, ListChecks, LogOut, MessagesSquare, Plus, Search, Settings2, Shield, UserRound } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,6 +38,7 @@ export async function logout() {
 
 export function Sidebar({ className }: { className?: string }) {
   const me = useStore((s) => s.me)
+  const decisionCount = useStore((s) => s.decisions?.length ?? 0)
   const groups = useStore((s) => s.groups)
   const loaded = useStore((s) => s.groupsLoaded)
   const route = useStore((s) => s.route)
@@ -114,6 +115,14 @@ export function Sidebar({ className }: { className?: string }) {
         </NavItem>
         <NavItem href="#/tasks" icon={<ListChecks />} active={route.name === 'tasks'}>
           任务
+        </NavItem>
+        <NavItem href="#/decisions" icon={<ClipboardCheck />} active={route.name === 'decisions'}>
+          待决定
+          {decisionCount > 0 && (
+            <span className="ml-auto min-w-5 rounded-full bg-brand px-1.5 text-center text-[11px] leading-5 font-medium text-white tabular-nums">
+              {decisionCount}
+            </span>
+          )}
         </NavItem>
         <NavItem href="#/agents" icon={<Bot />} active={route.name === 'agents'}>
           我的 agent

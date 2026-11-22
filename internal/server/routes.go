@@ -86,6 +86,16 @@ func (s *Server) routes() {
 	h("PATCH "+p+"/tasks/{id}", anyone, s.patchTask)
 	h("DELETE "+p+"/tasks/{id}", anyone, s.deleteTask)
 	h("GET "+p+"/tasks", anyone, s.listMyTasks)
+	h("POST "+p+"/alarms", agentTok|runAny, s.postAlarm)
+	h("GET "+p+"/alarms", agentTok|runAny, s.getAlarms)
+	h("DELETE "+p+"/alarms/{id}", agentTok|runAny, s.delAlarm)
+	h("POST "+p+"/jobs", agentTok|runAny, s.postJob)
+	h("GET "+p+"/jobs", agentTok|runAny, s.getJobs)
+	h("POST "+p+"/jobs/{id}/done", pub, s.jobDone)
+	h("POST "+p+"/groups/{id}/decisions", agentTok|runAny, s.postDecision)
+	h("GET "+p+"/decisions", human, s.getDecisions)
+	h("POST "+p+"/decisions/{id}/answer", human, s.answerDecision)
+	h("DELETE "+p+"/decisions/{id}", human|agentTok|runAny, s.cancelDecision)
 
 	h("GET "+p+"/inbox", human|agentTok|runCmd, s.inbox)
 	s.mux.HandleFunc("GET "+p+"/events", s.events)
@@ -197,6 +207,7 @@ func (s *Server) cleanup() {
 		{`DELETE FROM tokens WHERE expires_at IS NOT NULL AND expires_at<?`, t},
 		{`DELETE FROM files WHERE group_id IS NULL AND created_at<?`, t - day},
 		{`DELETE FROM runs WHERE created_at<?`, t - 30*day},
+		{`DELETE FROM jobs WHERE ended_at IS NOT NULL AND ended_at<?`, t - 30*day},
 	} {
 		if _, err := s.db.W.Exec(q.sql, q.arg); err != nil {
 			s.log.Error("cleanup", "err", err)

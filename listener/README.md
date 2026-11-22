@@ -234,6 +234,8 @@ Codex 的细节（codex-cli 0.168.0 上验证）：
 - `search_messages {query, groupId?, from?, before?, after?, limit?}`（v0.3.0）：搜索群里以前的消息，返回序号、作者、时间和摘要。默认搜本群。
 - `task_list` / `task_add` / `task_update`（v0.3.2）：查看和维护群任务，默认本群。restricted 档只有 `task_list`（Claude 的 `--allowedTools` 放行 `mcp__pichat__task_list`，服务端也不给 restricted token 列出另外两个）。
 
+- `wake_me` / `ask_decision`（v0.4.0）：定时叫醒自己、请人做决定，见服务端 skill.md。restricted 档没有。
+
 prompt 里的任务规则（服务端有 `/mcp` 时）：指挥者档位（project / full，Codex 也一样）是“群任务：接到要做的事时，先用 task_list 看有没有同一件事的任务，有就认领更新，没有再用 task_add 建一个；开始时标 doing，做完标 done，卡住标 blocked 并在 note 里写原因。不需要为闲聊、一句话回答或别的 agent 转述的事建任务。”；restricted 档是“群任务：可以用 task_list 查看任务，不能修改。”
 
 管理员可以在管理页「MCP 工具」里关掉某个内置工具，或接入外部 MCP 服务器；外部服务器的工具（`<服务器>__<工具>`）只给指挥者档位（project / full）的 run 和长期 agent token，restricted 档看不到。
@@ -263,3 +265,14 @@ node ~/.pichat/pichat-listen.mjs api GET /groups
 - 会话坏了：在网页上点“重置会话”，或删掉 `state.json` 里的 `main`（旧模式删对应的 `sessions` 项），下次会新建会话。
 - 一直“在终端中”：`attach` 进程还活着就会挡住 listener；关掉那个终端即可，进程不在的锁会被自动忽略。提示里写着“正在被终端进程 <pid> 使用”时，是有窗口直接打开了主会话：退出那个 claude / pi（`ps -p <pid> -o args` 看是哪个）。
 - 后台回答像是忘了你在终端里说过的话：看日志里有没有“检测到会话分叉”，终端分支在 `forks/` 的备份里；以后用 attach 进入主会话就不会分叉。
+
+## 后台任务（v0.4.0）
+
+`job [--label X] [--timeout-min N] [--group G] [--name N] -- '<命令>'`：在后台跑长命令。
+
+- 先 `POST /jobs` 登记，拿到任务 id 和一次性 secret，然后用 `job-run` 子进程（单独进程组、不继承 run token）执行命令，输出写到 `<agent 目录>/jobs/<id>.log`（run 里没有 agent 目录时是 `$PICHAT_HOME/jobs/`）。
+- 一个参数时当作 shell 命令行（`/bin/sh -c`）；`--` 后面有多个参数时按原样执行，不经过 shell。
+- 命令结束后带 secret 调 `POST /jobs/{id}/done`（退出码和最后 40 行输出），失败会退避重试；服务端在群里发一条给这个 agent 的结果消息并叫醒它。没回报的任务到时限（默认 24 小时）记为 lost。
+- 运行中的 agent run 结束、run token 过期都不影响后台任务。
+
+单次运行上限：默认 60 分钟，owner 在「我的 agent」里可以改成 30 分钟到 12 小时；listener 从 `/me` 和 SSE `config` 事件读取，下一次 run 生效。被定时或后台任务结果叫醒时，prompt 开头写明原因。

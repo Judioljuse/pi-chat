@@ -115,6 +115,29 @@ export interface Message {
   recalled: boolean
   new?: boolean
   via?: Via | null
+  /** Server-written details of a structured system message (v0.4.0). */
+  meta?: { type?: 'alarm' | 'job'; agentId?: string; status?: string } | null
+  /** Who this message's reply woke (a human, or an agent asked a question). */
+  replyWakes?: string[]
+  /** The decision this message asks (v0.4.0). */
+  decision?: Decision | null
+}
+
+export interface Decision {
+  id: string
+  groupId: string
+  groupName: string
+  seq: number
+  agent: { id: string; name: string }
+  askTo: { id: string; name: string }
+  question: string
+  options: string[]
+  status: 'open' | 'answered' | 'canceled'
+  answer: string | null
+  answeredBy: string | null
+  answerSeq: number | null
+  createdAt: number
+  answeredAt: number | null
 }
 
 export interface SendResult {
@@ -151,6 +174,8 @@ export interface Agent {
   recentRuns: { groupId: string; ok: boolean; detail: string; createdAt: number }[]
   runtime?: AgentRuntime | null
   sessions?: { session: string; host?: string | null; startedAt: number }[]
+  /** Longest single run before the listener stops it (v0.4.0; default 60). */
+  runMaxMinutes?: number
 }
 
 export interface AgentRuntime {

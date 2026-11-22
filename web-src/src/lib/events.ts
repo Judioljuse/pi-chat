@@ -2,6 +2,7 @@ import { api, ApiError } from './api'
 import { maybeNotify } from './desktop-notify'
 import {
   applyAgentEvent,
+  applyDecisionEvent,
   applyTaskEvent,
   fullSync,
   getState,
@@ -69,6 +70,7 @@ export function connectEvents() {
     if (e.agentId && e.state) applyAgentEvent(e)
   })
   on<{ groupId?: string; task?: unknown; taskId?: string; deleted?: boolean }>('task', (e) => applyTaskEvent(e))
+  on<{ groupId?: string; decision?: import('./types').Decision }>('decision', (e) => applyDecisionEvent(e))
   on('resync', () => fullSync())
   on<{ available?: boolean }>('update', (e) => {
     if (getState().me?.isAdmin) setState({ updateAvailable: !!e.available })

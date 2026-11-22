@@ -124,6 +124,10 @@ type Server struct {
 	// WakeDelay is the coalescing window; WebhookRetry the delay before the single retry.
 	WakeDelay    time.Duration
 	WebhookRetry time.Duration
+	// AlarmMinDelay is the shortest scheduled wake (10 minutes; tests lower it). loc is the time
+	// zone alarm times like "10:30" are read in (TZ, default Asia/Shanghai).
+	AlarmMinDelay time.Duration
+	loc           *time.Location
 
 	hopMu     sync.Mutex
 	blobMu    sync.Mutex // serializes blob creation with the blob sweep
@@ -167,8 +171,10 @@ func New(cfg Config, db *store.DB, assets Assets) *Server {
 		cfg: cfg, db: db, assets: assets, mux: http.NewServeMux(),
 		hub: newHub(), work: newWorking(), rl: newLimiter(), log: slog.Default(),
 		client:       webhookClient(cfg.WebhookAllow),
-		WakeDelay:    2 * time.Second,
-		WebhookRetry: 30 * time.Second,
+		WakeDelay:     2 * time.Second,
+		WebhookRetry:  30 * time.Second,
+		AlarmMinDelay: 10 * time.Minute,
+		loc:           alarmLocation(),
 		hopNotice:    map[string]time.Time{},
 		agentNotice:  map[string]time.Time{},
 	}
@@ -217,6 +223,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.checkFilesDir()
 	go s.cleanupLoop(ctx)
+	go s.opsLoop(ctx)
 	srv := &http.Server{Addr: s.cfg.Listen, Handler: s.mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
 	s.httpSrv = srv
 	s.startUpdates(ctx)

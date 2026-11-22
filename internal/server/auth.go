@@ -351,13 +351,14 @@ func (s *Server) me(c *ctx) (any, error) {
 func (s *Server) agentMe(a *actor) (obj, error) {
 	var platform, ownerName sql.NullString
 	var intro, tier, notes string
-	err := s.db.R.QueryRow(`SELECT p.platform,p.intro,p.commander_tier,p.owner_notes,o.display_name FROM principals p LEFT JOIN principals o ON o.id=p.owner_id WHERE p.id=?`, a.ID).
-		Scan(&platform, &intro, &tier, &notes, &ownerName)
+	var runMax sql.NullInt64
+	err := s.db.R.QueryRow(`SELECT p.platform,p.intro,p.commander_tier,p.owner_notes,o.display_name,p.run_max_min FROM principals p LEFT JOIN principals o ON o.id=p.owner_id WHERE p.id=?`, a.ID).
+		Scan(&platform, &intro, &tier, &notes, &ownerName, &runMax)
 	if err != nil {
 		return nil, err
 	}
 	m := obj{"id": a.ID, "kind": "agent", "displayName": a.DisplayName, "ownerId": a.OwnerID, "ownerName": ownerName.String,
-		"platform": platform.String, "intro": intro, "commanderTier": tier, "ownerNotes": notes}
+		"platform": platform.String, "intro": intro, "commanderTier": tier, "ownerNotes": notes, "runMaxMinutes": runMaxOf(runMax)}
 	if a.TokenKind == "run" {
 		m["run"] = obj{"groupId": a.RunLabel, "wakeId": a.RunWake}
 	}

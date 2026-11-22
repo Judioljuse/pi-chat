@@ -17,7 +17,7 @@ import (
 
 // builtinTools are the server's own MCP tools, in tools/list order (all read-only except
 // task_add / task_update, which only write pichat's own task records).
-var builtinTools = []string{"view_attachment", "web_fetch", "web_search", "search_messages", "task_list", "task_add", "task_update"}
+var builtinTools = []string{"view_attachment", "web_fetch", "web_search", "search_messages", "task_list", "task_add", "task_update", "wake_me", "ask_decision"}
 
 var builtinDesc = map[string]string{
 	"view_attachment": "查看群消息里的附件（图片、文本文件等）",
@@ -27,6 +27,8 @@ var builtinDesc = map[string]string{
 	"task_list":       "查看群任务（非指挥者 @ 的受限运行只有这一个任务工具）",
 	"task_add":        "新建群任务",
 	"task_update":     "更新群任务的状态、备注和负责人",
+	"wake_me":         "agent 定时叫醒自己（最早 10 分钟后，每个 agent 最多 5 个）",
+	"ask_decision":    "agent 请人在几个选项里做决定，答案回到群里并叫醒它",
 }
 
 func isBuiltin(name string) bool {

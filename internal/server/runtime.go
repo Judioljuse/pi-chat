@@ -54,6 +54,8 @@ func viaFor(a *actor, r *http.Request) any {
 	var v obj
 	if a.TokenKind == "run" {
 		v = obj{"kind": "run", "session": nullable(a.RunSession), "tier": nullable(a.RunTier), "host": nullable(a.RunHost)}
+	} else if r == nil {
+		v = obj{"kind": "direct", "session": nil, "host": nil}
 	} else {
 		v = obj{"kind": "direct", "session": nullable(cleanSession(r.Header.Get("X-Pichat-Session"))),
 			"host": nullable(cleanLabel(r.Header.Get("X-Pichat-Host"), 64))}

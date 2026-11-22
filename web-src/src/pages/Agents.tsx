@@ -423,7 +423,7 @@ function AgentCard({ a }: { a: Agent }) {
   }, [focused])
   const platform = PLATFORM[a.platform ?? ''] || a.platform || '未知平台'
 
-  const patch = async (body: Partial<Pick<Agent, 'displayName' | 'commanderTier' | 'ownerNotes' | 'disabled'>>, msg = '已保存') => {
+  const patch = async (body: Partial<Pick<Agent, 'displayName' | 'commanderTier' | 'ownerNotes' | 'disabled' | 'runMaxMinutes'>>, msg = '已保存') => {
     try {
       const { agent } = await api<{ agent?: Agent }>('PATCH', `/agents/${a.id}`, body)
       replaceAgent(a.id, agent ?? body)
@@ -567,6 +567,7 @@ function AgentCard({ a }: { a: Agent }) {
         {PLATFORM_LIMITS[a.platform ?? ''] && (
           <p className="rounded-control bg-accent/60 px-3 py-2 text-[12.5px] leading-relaxed text-body">{PLATFORM_LIMITS[a.platform ?? '']}</p>
         )}
+        <RunLimit a={a} onSave={(runMaxMinutes) => patch({ runMaxMinutes }, '已保存单次运行上限')} />
         <Runtime a={a} state={state} />
         <NotesEditor a={a} onSave={(ownerNotes) => patch({ ownerNotes })} />
         <Grants a={a} />
@@ -611,6 +612,31 @@ function Segmented({
         </ToggleGroupItem>
       ))}
     </ToggleGroup>
+  )
+}
+
+const RUN_LIMITS = [30, 60, 120, 240, 480, 720]
+
+/** Longest single run before the listener stops it (v0.4.0). Long jobs should go to `job` instead. */
+function RunLimit({ a, onSave }: { a: Agent; onSave: (m: number) => void }) {
+  const cur = a.runMaxMinutes ?? 60
+  const opts = RUN_LIMITS.includes(cur) ? RUN_LIMITS : [...RUN_LIMITS, cur].sort((x, y) => x - y)
+  return (
+    <Row label="单次运行上限" hint="一次被叫醒后最多跑多久，超时会被停掉。更长的命令让 agent 用 job 放到后台跑，跑完自动叫醒它。需要 listener 0.4.0 以上。">
+      <Select value={String(cur)} onValueChange={(v) => Number(v) !== cur && onSave(Number(v))}>
+        <SelectTrigger className="h-8 w-40">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {opts.map((m) => (
+            <SelectItem key={m} value={String(m)}>
+              {m < 60 ? `${m} 分钟` : `${m / 60} 小时`}
+              {m === 60 ? '（默认）' : ''}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Row>
   )
 }
 

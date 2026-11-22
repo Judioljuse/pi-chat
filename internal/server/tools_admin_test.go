@@ -79,7 +79,7 @@ func TestAdminToolsAuthzAndSearchSettings(t *testing.T) {
 	if s := d["search"].(map[string]any); s["provider"] != "duckduckgo" || s["source"] != "default" || s["keySet"] != false {
 		t.Fatalf("default search: %v", s)
 	}
-	if len(d["builtin"].([]any)) != 7 || len(d["servers"].([]any)) != 0 {
+	if len(d["builtin"].([]any)) != 9 || len(d["servers"].([]any)) != 0 {
 		t.Fatalf("admin tools: %v", d)
 	}
 	// Invalid settings are refused and change nothing.
@@ -203,7 +203,7 @@ func TestBuiltinToggle(t *testing.T) {
 		t.Fatalf("disabled tool callable: %v", out)
 	}
 	ti := e.anon().ok("GET", "", nil)["tools"].(map[string]any)
-	if has(strs(ti["available"]), "web_fetch") || len(ti["available"].([]any)) != 6 {
+	if has(strs(ti["available"]), "web_fetch") || len(ti["available"].([]any)) != 8 {
 		t.Fatalf("describe: %v", ti)
 	}
 	if d := admin.ok("GET", "/admin/tools", nil); d["builtin"].([]any)[1].(map[string]any)["enabled"] != false {

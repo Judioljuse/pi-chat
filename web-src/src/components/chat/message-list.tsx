@@ -217,7 +217,8 @@ function Rows({
               data-seq={r.seqs[0]}
               className={cn('my-3 bg-transparent px-2 py-0.5 text-[12px]', r.seqs[0] > (baseline.current ?? 0) && 'animate-fade-up')}
             >
-              <span>{r.text}</span>
+              {/* Job results carry output lines: show the first line, the rest on hover. */}
+              <span title={r.text.includes('\n') ? r.text : undefined}>{r.text.split('\n')[0]}</span>
               <span className="tabular-nums opacity-70">{fmtTime(r.createdAt)}</span>
             </MessageMarker>
           )

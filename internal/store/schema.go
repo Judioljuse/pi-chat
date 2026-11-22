@@ -250,4 +250,55 @@ CREATE INDEX ix_tasks_assignee ON tasks(assignee_id, status);
 	`
 ALTER TABLE groups ADD COLUMN agent_wakes_per_agent_hour INTEGER;
 ALTER TABLE groups ADD COLUMN rules TEXT;
+`,
+	// 11: v0.4.0. messages.meta is server-written JSON for structured messages (scheduled wakes,
+	// finished background jobs, decision requests); members can never set it. alarms are wakes an
+	// agent scheduled for itself, jobs are long commands its listener runs in the background,
+	// decisions are questions an agent asks a person with fixed options. run_max_min is the
+	// per-agent run time limit the owner sets (NULL = 60).
+	`
+ALTER TABLE messages ADD COLUMN meta TEXT;
+ALTER TABLE principals ADD COLUMN run_max_min INTEGER;
+CREATE TABLE alarms (
+  id TEXT PRIMARY KEY,                 -- al_...
+  agent_id TEXT NOT NULL REFERENCES principals(id),
+  group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  fire_at INTEGER NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  commander INTEGER NOT NULL,          -- set during a commander run: the wake keeps that authority
+  created_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX ix_alarms_fire ON alarms(fire_at);
+CREATE INDEX ix_alarms_agent ON alarms(agent_id);
+CREATE TABLE jobs (
+  id TEXT PRIMARY KEY,                 -- j_...
+  agent_id TEXT NOT NULL REFERENCES principals(id),
+  group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  commander INTEGER NOT NULL,
+  secret_hash BLOB NOT NULL,           -- store.Hash(secret): the detached job reports back with it
+  timeout_min INTEGER NOT NULL,        -- no report by started_at + timeout: marked lost
+  status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','failed','lost')),
+  exit_code INTEGER,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER
+) STRICT;
+CREATE INDEX ix_jobs_agent ON jobs(agent_id, status);
+CREATE TABLE decisions (
+  id TEXT PRIMARY KEY,                 -- d_...
+  group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,                -- the agent's message that asks
+  agent_id TEXT NOT NULL REFERENCES principals(id),
+  ask_to TEXT NOT NULL REFERENCES principals(id),   -- the person who decides
+  question TEXT NOT NULL,
+  options TEXT NOT NULL,               -- JSON array of strings
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','canceled')),
+  answer TEXT,
+  answered_by TEXT REFERENCES principals(id),
+  answer_seq INTEGER,
+  created_at INTEGER NOT NULL,
+  answered_at INTEGER
+) STRICT;
+CREATE INDEX ix_decisions_to ON decisions(ask_to, status);
+CREATE INDEX ix_decisions_group ON decisions(group_id, seq);
 `}

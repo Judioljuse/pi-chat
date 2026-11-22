@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -95,16 +96,40 @@ func (s *Server) emit(tx *sql.Tx, after *[]func(), gid, typ string, data any) er
 }
 
 func (s *Server) systemMessage(tx *sql.Tx, after *[]func(), gid, text string) error {
+	_, err := s.systemMessageFor(tx, after, gid, text, nil, "")
+	return err
+}
+
+// systemMessageFor posts a system message; with forAgent set it is addressed to that agent
+// (a mention row, so its inbox and `watch` see it) and meta (server-written, see migration 11)
+// tells the listener what it is. It returns the new seq.
+func (s *Server) systemMessageFor(tx *sql.Tx, after *[]func(), gid, text string, meta obj, forAgent string) (int64, error) {
 	var seq int64
 	if err := tx.QueryRow(`UPDATE groups SET last_seq=last_seq+1 WHERE id=? RETURNING last_seq`, gid).Scan(&seq); err != nil {
-		return err
+		return 0, err
 	}
 	t := now()
-	if _, err := tx.Exec(`INSERT INTO messages(group_id,seq,kind,body,created_at) VALUES(?,?,?,?,?)`, gid, seq, "system", text, t); err != nil {
-		return err
+	var metaJSON any
+	if meta != nil {
+		b, _ := json.Marshal(meta)
+		metaJSON = string(b)
 	}
-	return s.emit(tx, after, gid, "message", obj{"seq": seq, "groupId": gid, "kind": "system", "author": nil, "text": text,
-		"mentions": []string{}, "mentionAll": false, "replyTo": nil, "hop": 0, "files": []any{}, "createdAt": t, "recalled": false, "new": true})
+	if _, err := tx.Exec(`INSERT INTO messages(group_id,seq,kind,body,created_at,meta) VALUES(?,?,?,?,?,?)`, gid, seq, "system", text, t, metaJSON); err != nil {
+		return 0, err
+	}
+	mentions := []string{}
+	if forAgent != "" {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO mentions(target_id,group_id,seq,reason) VALUES(?,?,?,'mention')`, forAgent, gid, seq); err != nil {
+			return 0, err
+		}
+		mentions = append(mentions, forAgent)
+	}
+	m := obj{"seq": seq, "groupId": gid, "kind": "system", "author": nil, "text": text,
+		"mentions": mentions, "mentionAll": false, "replyTo": nil, "hop": 0, "files": []any{}, "createdAt": t, "recalled": false, "new": true}
+	if meta != nil {
+		m["meta"] = meta
+	}
+	return seq, s.emit(tx, after, gid, "message", m)
 }
 
 type fileJSON struct {
@@ -117,7 +142,7 @@ type fileJSON struct {
 // fetchMessages loads messages of gid matching cond (SQL over alias m) as seen by reader.
 func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args ...any) ([]obj, error) {
 	rows, err := q.Query(`SELECT m.seq,m.kind,m.body,m.reply_to,m.hop,m.mention_all,m.created_at,m.recalled_at,
-		COALESCE(m.author_id,''),COALESCE(p.kind,''),COALESCE(mb.nick,p.display_name,''),COALESCE(p.owner_id,''),COALESCE(o.display_name,''),COALESCE(p.platform,''),m.via
+		COALESCE(m.author_id,''),COALESCE(p.kind,''),COALESCE(mb.nick,p.display_name,''),COALESCE(p.owner_id,''),COALESCE(o.display_name,''),COALESCE(p.platform,''),m.via,m.meta
 		FROM messages m LEFT JOIN principals p ON p.id=m.author_id LEFT JOIN members mb ON mb.group_id=m.group_id AND mb.principal_id=m.author_id
 		LEFT JOIN principals o ON o.id=p.owner_id WHERE m.group_id=?1 AND (`+cond+`) ORDER BY m.seq`, append([]any{gid}, args...)...)
 	if err != nil {
@@ -129,9 +154,9 @@ func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args 
 		var seq, hop, created int64
 		var kind, body, aid, akind, aname, aowner, aownerName, aplatform string
 		var replyTo, recalled sql.NullInt64
-		var via sql.NullString
+		var via, meta sql.NullString
 		var mall int
-		if err := rows.Scan(&seq, &kind, &body, &replyTo, &hop, &mall, &created, &recalled, &aid, &akind, &aname, &aowner, &aownerName, &aplatform, &via); err != nil {
+		if err := rows.Scan(&seq, &kind, &body, &replyTo, &hop, &mall, &created, &recalled, &aid, &akind, &aname, &aowner, &aownerName, &aplatform, &via, &meta); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -142,6 +167,12 @@ func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args 
 		}
 		if replyTo.Valid {
 			m["replyTo"] = replyTo.Int64
+		}
+		if meta.Valid && meta.String != "" && !recalled.Valid {
+			var mo obj
+			if json.Unmarshal([]byte(meta.String), &mo) == nil {
+				m["meta"] = mo
+			}
 		}
 		if recalled.Valid {
 			m["text"] = ""
@@ -174,19 +205,31 @@ func (s *Server) fetchMessages(q querier, reader *actor, gid, cond string, args 
 			au["canCommandYou"] = v && !viaRestricted(m["via"])
 		}
 	}
-	mrows, err := q.Query(`SELECT seq,target_id FROM mentions WHERE group_id=? AND seq BETWEEN ? AND ? AND reason='mention'`, gid, lo, hi)
+	// mentions: who the message @s; replyWakes: whom its reply notified (v0.4.0: a human, or an
+	// agent asked a question), so listeners know a reply was aimed at them.
+	mrows, err := q.Query(`SELECT seq,target_id,reason FROM mentions WHERE group_id=? AND seq BETWEEN ? AND ? AND reason IN ('mention','reply')`, gid, lo, hi)
 	if err != nil {
 		return nil, err
 	}
 	for mrows.Next() {
 		var seq int64
-		var t string
-		mrows.Scan(&seq, &t)
-		if m := bySeq[seq]; m != nil {
+		var t, reason string
+		mrows.Scan(&seq, &t, &reason)
+		m := bySeq[seq]
+		if m == nil {
+			continue
+		}
+		if reason == "mention" {
 			m["mentions"] = append(m["mentions"].([]string), t)
+		} else {
+			rw, _ := m["replyWakes"].([]string)
+			m["replyWakes"] = append(rw, t)
 		}
 	}
 	mrows.Close()
+	if err := s.fillDecisions(q, out); err != nil {
+		return nil, err
+	}
 	frows, err := q.Query(`SELECT seq,id,name,mime,size FROM files WHERE group_id=? AND seq BETWEEN ? AND ? ORDER BY created_at,id`, gid, lo, hi)
 	if err != nil {
 		return nil, err
@@ -512,16 +555,21 @@ func parseMentions(text string, explicit []string, ms []gm) (ids []string, all b
 }
 
 func (s *Server) sendMessage(c *ctx) (any, error) {
-	gid := c.r.PathValue("id")
 	var req sendReq
 	if err := c.decode(&req); err != nil {
 		return nil, err
 	}
+	return s.postMessage(c.a, c.r, c.r.PathValue("id"), req)
+}
+
+// postMessage posts req to gid as a (also used by the server itself on a member's behalf, e.g.
+// answering a decision); r only supplies the provenance headers of direct agent tokens.
+func (s *Server) postMessage(a *actor, r *http.Request, gid string, req sendReq) (obj, error) {
 	n := utf8.RuneCountInString(req.Text)
 	if n > 10000 || (n == 0 && len(req.Files) == 0) || strings.TrimSpace(req.Text) == "" && len(req.Files) == 0 {
 		return nil, badRequest("消息内容 1 到 10000 字")
 	}
-	if c.a.isAgent() && isSilentText(req.Text) {
+	if a.isAgent() && isSilentText(req.Text) {
 		return nil, errf(400, "silent", "以 [SILENT] 开头的回复不会发出")
 	}
 	if len(req.Files) > 8 {
@@ -530,10 +578,9 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 	if len(req.OpKey) > 128 {
 		return nil, badRequest("opKey 太长")
 	}
-	if !s.rl.allow("send:"+string(c.a.TokenHash), 30, time.Minute) {
+	if !s.rl.allow("send:"+string(a.TokenHash), 30, time.Minute) {
 		return nil, errf(429, "rate_limited", "发送太频繁，每分钟最多 30 条")
 	}
-	a := c.a
 	var (
 		msg       obj
 		dup       bool
@@ -645,7 +692,8 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 		}
 		// Replies notify the replied-to author (addT skips self-replies). Since v0.3.3 an agent's
 		// reply to another agent's message does not wake it: agents @ explicitly to hand work on.
-		if replyAuthor != "" && (replyKind == "human" || (replyKind == "agent" && a.isHuman())) {
+		// v0.4.0: unless the reply asks it something (isQuestionText), so a question isn't left hanging.
+		if replyAuthor != "" && (replyKind == "human" || (replyKind == "agent" && (a.isHuman() || isQuestionText(req.Text)))) {
 			addT(replyAuthor, "reply")
 		}
 		if gkind == "dm" {
@@ -685,7 +733,7 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 			replyTo = *req.ReplyTo
 		}
 		if _, err := tx.Exec(`INSERT INTO messages(group_id,seq,author_id,kind,body,reply_to,hop,mention_all,op_key,created_at,via) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			gid, seq, a.ID, "text", req.Text, replyTo, hop, b2i(allOK), nullStr(req.OpKey), now(), viaFor(a, c.r)); err != nil {
+			gid, seq, a.ID, "text", req.Text, replyTo, hop, b2i(allOK), nullStr(req.OpKey), now(), viaFor(a, r)); err != nil {
 			return err
 		}
 		for _, t := range targets {
@@ -702,8 +750,19 @@ func (s *Server) sendMessage(c *ctx) (any, error) {
 				return badRequest("附件 %s 不存在或已被使用", f)
 			}
 		}
-		if _, err := tx.Exec(`UPDATE members SET last_read_seq=? WHERE group_id=? AND principal_id=?`, seq, gid, a.ID); err != nil {
-			return err
+		// Sending marks the group read up to the new message, except for an agent with unread messages
+		// from others (it posted with ignoreNew, e.g. a run's reply): those arrived while it worked
+		// and must still reach it, so its read position stays put (its own messages never count as unread).
+		advance := true
+		if a.isAgent() {
+			var others int
+			tx.QueryRow(`SELECT COUNT(*) FROM messages WHERE group_id=? AND seq>? AND seq<? AND (author_id IS NULL OR author_id<>?)`, gid, lastRead, seq, a.ID).Scan(&others)
+			advance = others == 0
+		}
+		if advance {
+			if _, err := tx.Exec(`UPDATE members SET last_read_seq=? WHERE group_id=? AND principal_id=?`, seq, gid, a.ID); err != nil {
+				return err
+			}
 		}
 		list, err := s.fetchMessages(tx, a, gid, `m.seq=?2`, seq)
 		if err != nil {
@@ -749,6 +808,39 @@ func cloneMsg(m obj) obj {
 	}
 	out["new"] = true
 	return out
+}
+
+// questionWords mark a request for an answer even without a question mark.
+var questionWords = []string{"请确认", "请回复", "请决定", "请拍板", "请答复", "请告知", "是否", "要不要", "能不能", "可不可以", "行不行"}
+
+// isQuestionText reports whether text asks something: a question mark or a question word
+// outside code (fenced blocks and inline `code` are skipped, they often hold "?" in URLs or regexes).
+func isQuestionText(text string) bool {
+	var b strings.Builder
+	parts := strings.Split(text, "```")
+	for i := 0; i < len(parts); i += 2 {
+		inl := strings.Split(parts[i], "`")
+		for j := 0; j < len(inl); j += 2 {
+			b.WriteString(inl[j])
+			b.WriteByte('\n')
+		}
+	}
+	t := b.String()
+	// URLs carry "?" in query strings.
+	for _, f := range strings.Fields(t) {
+		if strings.Contains(f, "://") {
+			t = strings.Replace(t, f, " ", 1)
+		}
+	}
+	if strings.ContainsAny(t, "?？") {
+		return true
+	}
+	for _, w := range questionWords {
+		if strings.Contains(t, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // silentPrefixes mark an agent's "no reply" answer (v0.3.3); matched after trimming and after

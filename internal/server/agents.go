@@ -146,9 +146,9 @@ func (s *Server) pair(c *ctx) (any, error) {
 func (s *Server) agentJSON(id string) (obj, error) {
 	var dn, platform, intro, tier, notes string
 	var disabled int
-	var lastSeen sql.NullInt64
-	err := s.db.R.QueryRow(`SELECT display_name,COALESCE(platform,''),intro,commander_tier,owner_notes,disabled,last_seen_at FROM principals WHERE id=?`, id).
-		Scan(&dn, &platform, &intro, &tier, &notes, &disabled, &lastSeen)
+	var lastSeen, runMax sql.NullInt64
+	err := s.db.R.QueryRow(`SELECT display_name,COALESCE(platform,''),intro,commander_tier,owner_notes,disabled,last_seen_at,run_max_min FROM principals WHERE id=?`, id).
+		Scan(&dn, &platform, &intro, &tier, &notes, &disabled, &lastSeen, &runMax)
 	if err != nil {
 		return nil, notFoundIf(err)
 	}
@@ -185,7 +185,7 @@ func (s *Server) agentJSON(id string) (obj, error) {
 	}
 	return obj{"id": id, "displayName": dn, "platform": platform, "intro": intro, "commanderTier": tier, "ownerNotes": notes,
 		"disabled": disabled != 0, "online": s.hub.online(id), "lastSeenAt": ls, "wake": wake, "grants": grants, "recentRuns": runs,
-		"runtime": s.ownerJSON(s.loadRuntime(id)), "sessions": sessions}, nil
+		"runtime": s.ownerJSON(s.loadRuntime(id)), "sessions": sessions, "runMaxMinutes": runMaxOf(runMax)}, nil
 }
 
 func (s *Server) grants(agentID string) ([]obj, error) {
@@ -229,6 +229,7 @@ func (s *Server) patchAgent(c *ctx) (any, error) {
 	var req struct {
 		DisplayName, CommanderTier, OwnerNotes *string
 		Disabled                               *bool
+		RunMaxMinutes                          *int `json:"runMaxMinutes"`
 	}
 	if err := c.decode(&req); err != nil {
 		return nil, err
@@ -266,6 +267,20 @@ func (s *Server) patchAgent(c *ctx) (any, error) {
 		if _, err := s.db.W.Exec(`UPDATE principals SET owner_notes=? WHERE id=?`, *req.OwnerNotes, id); err != nil {
 			return nil, err
 		}
+	}
+	if req.RunMaxMinutes != nil {
+		v := *req.RunMaxMinutes
+		if v != 0 && (v < minRunMaxMin || v > maxRunMaxMin) {
+			return nil, badRequest("单次运行上限 %d 到 %d 分钟（0 恢复默认 %d）", minRunMaxMin, maxRunMaxMin, defaultRunMaxMin)
+		}
+		var val any
+		if v != 0 {
+			val = v
+		}
+		if _, err := s.db.W.Exec(`UPDATE principals SET run_max_min=? WHERE id=?`, val, id); err != nil {
+			return nil, err
+		}
+		s.hub.send(id, encodeEvent(0, "config", obj{"runMaxMinutes": runMaxOf(sql.NullInt64{Int64: int64(v), Valid: v != 0})}))
 	}
 	if req.Disabled != nil {
 		if _, err := s.db.W.Exec(`UPDATE principals SET disabled=? WHERE id=?`, b2i(*req.Disabled), id); err != nil {
@@ -433,8 +448,9 @@ func (s *Server) createRunToken(c *ctx) (any, error) {
 		// mention/reply/dm of this agent was written by someone who can command it.
 		s.db.R.QueryRow(`SELECT EXISTS(SELECT 1 FROM mentions mn JOIN members me ON me.group_id=mn.group_id AND me.principal_id=mn.target_id
 			JOIN messages m ON m.group_id=mn.group_id AND m.seq=mn.seq
-			WHERE mn.target_id=?1 AND mn.group_id=?2 AND mn.seq>me.last_read_seq AND m.recalled_at IS NULL AND m.author_id IS NOT NULL
-			AND `+viaCommandsSQL("m")+` AND `+strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(canCommandSQL, "?1", "m.author_id"), "?2", "?1"), "?3", "?2")+`)`,
+			WHERE mn.target_id=?1 AND mn.group_id=?2 AND mn.seq>me.last_read_seq AND m.recalled_at IS NULL
+			AND ((m.author_id IS NOT NULL AND `+viaCommandsSQL("m")+` AND `+strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(canCommandSQL, "?1", "m.author_id"), "?2", "?1"), "?3", "?2")+`)
+			OR (m.author_id IS NULL AND json_extract(m.meta,'$.agentId')=?1 AND json_extract(m.meta,'$.commander')=1)))`,
 			c.a.ID, req.GroupID).Scan(&commander)
 	}
 	tier := "restricted"
@@ -450,7 +466,11 @@ func (s *Server) createRunToken(c *ctx) (any, error) {
 	if tier != "restricted" {
 		scope = "*"
 	}
-	tok, exp, err := s.newToken(s.db.W, c.a.ID, "run", req.GroupID, scope, req.WakeID, runTTL)
+	// A run may last as long as the owner's per-agent limit (v0.4.0); its token must too.
+	var runMax sql.NullInt64
+	s.db.R.QueryRow(`SELECT run_max_min FROM principals WHERE id=?`, c.a.ID).Scan(&runMax)
+	ttl := max(runTTL, time.Duration(runMaxOf(runMax)+5)*time.Minute)
+	tok, exp, err := s.newToken(s.db.W, c.a.ID, "run", req.GroupID, scope, req.WakeID, ttl)
 	if err != nil {
 		return nil, err
 	}

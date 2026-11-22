@@ -1,3 +1,4 @@
+import { DecisionCard } from './decision-card'
 import { memo, useEffect, useState, type ReactNode } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { AlertCircle, Copy, CornerUpLeft, CheckCheck, Ellipsis, FileText, ListPlus, MessageSquareX, RotateCcw, Trash2 } from 'lucide-react'
@@ -360,6 +361,12 @@ export const MessageItem = memo(function MessageItem({
               </MessageBubble>
             )}
             {files}
+            {m.decision && (
+              <DecisionCard
+                d={m.decision}
+                canAnswer={m.decision.askTo.id === meId || ['owner', 'admin'].includes(members.find((x) => x.id === meId)?.role ?? '')}
+              />
+            )}
             {(actions || more || readers.length > 0) && (
               <div className="-mt-0.5 -mb-3 -ml-1.5 flex h-7 items-center gap-2 pointer-coarse:my-0">
                 {readers.length > 0 && <Readers readers={readers} className="pl-1.5" />}
