@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { BarChart3, Bot, ChevronDown, ClipboardCheck, ChevronsUpDown, ListChecks, LogOut, MessagesSquare, Plus, Search, Settings2, Shield, UserRound } from 'lucide-react'
+import { BarChart3, Bot, ChevronDown, ChevronUp, ClipboardCheck, ChevronsUpDown, ListChecks, LogOut, MessagesSquare, Plus, Search, Settings2, Shield, UserRound } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +39,9 @@ export async function logout() {
 export function Sidebar({ className }: { className?: string }) {
   const me = useStore((s) => s.me)
   const decisionCount = useStore((s) => s.decisions?.length ?? 0)
+  // The page links fold into one row of icons by default, leaving room for the chat list (v0.5.1).
+  const [navOpen, setNavOpen] = useState(() => localStorage.getItem(NAV_OPEN) === '1')
+  useEffect(() => localStorage.setItem(NAV_OPEN, navOpen ? '1' : '0'), [navOpen])
   const groups = useStore((s) => s.groups)
   const loaded = useStore((s) => s.groupsLoaded)
   const route = useStore((s) => s.route)
@@ -110,34 +113,18 @@ export function Sidebar({ className }: { className?: string }) {
             {mac ? '⌘K' : 'Ctrl K'}
           </kbd>
         </label>
-        <NavItem href="#/" icon={<MessagesSquare />} active={route.name === 'home' || route.name === 'chat'}>
-          消息
-        </NavItem>
-        <NavItem href="#/tasks" icon={<ListChecks />} active={route.name === 'tasks'}>
-          任务
-        </NavItem>
-        <NavItem href="#/decisions" icon={<ClipboardCheck />} active={route.name === 'decisions'}>
-          待决定
-          {decisionCount > 0 && (
-            <span className="ml-auto min-w-5 rounded-full bg-brand px-1.5 text-center text-[11px] leading-5 font-medium text-white tabular-nums">
-              {decisionCount}
-            </span>
-          )}
-        </NavItem>
-        <NavItem href="#/agents" icon={<Bot />} active={route.name === 'agents'}>
-          我的 agent
-        </NavItem>
-        <NavItem href="#/usage" icon={<BarChart3 />} active={route.name === 'usage'}>
-          用量
-        </NavItem>
-        {me?.isAdmin && (
-          <NavItem href="#/admin" icon={<Shield />} active={route.name === 'admin'}>
-            管理
-            {updateAvailable && (
-              <span className="ml-auto size-1.5 rounded-full bg-brand" title="有新版本" aria-label="有新版本" />
-            )}
-          </NavItem>
-        )}
+        <Nav
+          open={navOpen}
+          onToggle={() => setNavOpen((v) => !v)}
+          items={[
+            { href: '#/', icon: <MessagesSquare />, label: '消息', active: route.name === 'home' || route.name === 'chat' },
+            { href: '#/tasks', icon: <ListChecks />, label: '任务', active: route.name === 'tasks' },
+            { href: '#/decisions', icon: <ClipboardCheck />, label: '待决定', active: route.name === 'decisions', count: decisionCount },
+            { href: '#/agents', icon: <Bot />, label: '我的 agent', active: route.name === 'agents' },
+            { href: '#/usage', icon: <BarChart3 />, label: '用量', active: route.name === 'usage' },
+            ...(me?.isAdmin ? [{ href: '#/admin', icon: <Shield />, label: '管理', active: route.name === 'admin', dot: updateAvailable }] : []),
+          ]}
+        />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
@@ -216,6 +203,78 @@ export function Sidebar({ className }: { className?: string }) {
       <NewGroupDialog open={creating} onOpenChange={setCreating} />
       <NewDmDialog open={dming} onOpenChange={setDming} />
     </aside>
+  )
+}
+
+const NAV_OPEN = 'pichat:nav-open'
+
+interface NavLink {
+  href: string
+  icon: ReactNode
+  label: string
+  active?: boolean
+  count?: number
+  dot?: boolean
+}
+
+function Nav({ items, open, onToggle }: { items: NavLink[]; open: boolean; onToggle: () => void }) {
+  if (!open)
+    return (
+      <div className="flex items-center gap-0.5">
+        {items.map((it) => (
+          <a
+            key={it.href}
+            href={it.href}
+            title={it.count ? `${it.label}（${it.count}）` : it.label}
+            aria-label={it.count ? `${it.label}（${it.count}）` : it.label}
+            aria-current={it.active ? 'page' : undefined}
+            className={cn(
+              'relative grid size-8 place-items-center rounded-control text-body transition-colors hover:bg-sidebar-accent hover:text-foreground [&_svg]:size-4',
+              it.active && 'bg-sidebar-accent text-foreground',
+            )}
+          >
+            {it.icon}
+            {!!it.count && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-brand px-1 text-center text-[10px] leading-4 font-medium text-white tabular-nums">
+                {it.count > 99 ? '99+' : it.count}
+              </span>
+            )}
+            {it.dot && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-brand" />}
+          </a>
+        ))}
+        <button
+          type="button"
+          onClick={onToggle}
+          title="展开导航"
+          aria-label="展开导航"
+          aria-expanded={false}
+          className="ml-auto grid size-8 place-items-center rounded-control text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground [&_svg]:size-4"
+        >
+          <ChevronDown />
+        </button>
+      </div>
+    )
+  return (
+    <>
+      {items.map((it) => (
+        <NavItem key={it.href} href={it.href} icon={it.icon} active={it.active}>
+          {it.label}
+          {!!it.count && (
+            <span className="ml-auto min-w-5 rounded-full bg-brand px-1.5 text-center text-[11px] leading-5 font-medium text-white tabular-nums">{it.count}</span>
+          )}
+          {it.dot && <span className="ml-auto size-1.5 rounded-full bg-brand" title="有新版本" aria-label="有新版本" />}
+        </NavItem>
+      ))}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded
+        className="flex h-6 items-center gap-1 self-start rounded-control px-2 text-[12px] text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3.5"
+      >
+        <ChevronUp />
+        收起导航
+      </button>
+    </>
   )
 }
 
